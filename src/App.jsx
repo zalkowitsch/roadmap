@@ -1,41 +1,37 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  DndContext, DragOverlay, PointerSensor, useSensor, useSensors, closestCorners,
+  DndContext, DragOverlay, PointerSensor, useSensor, useSensors, closestCorners, useDroppable,
 } from "@dnd-kit/core";
 import {
-  SortableContext, useSortable, verticalListSortingStrategy, arrayMove,
+  SortableContext, useSortable, verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { seedBoard, MONTHS, MILESTONES } from "./data.js";
+import { emptyBoard, normalizeBoard, nextAccent, newId } from "./data.js";
 
-const STORAGE_KEY = "air-billing-roadmap:v2";
-const milestoneMonths = new Set(MILESTONES.map((m) => m.monthIndex));
-const newId = () => "i" + Math.random().toString(36).slice(2, 9);
+const STORE_KEY = "roadmaps:v1";
 
-/* ---------- persistence ---------- */
-function loadBoard() {
+/* ============================================================
+   Multi-roadmap store (localStorage)
+   shape: { roadmaps: [{ id, name, board }], activeId }
+   ============================================================ */
+function loadStore() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) {
+      const s = JSON.parse(raw);
+      if (s?.roadmaps?.length) return s;
+    }
   } catch { /* fall through */ }
-  return seedBoard();
+  const first = { id: "rm-" + newId(), name: "Untitled roadmap", board: emptyBoard() };
+  return { roadmaps: [first], activeId: first.id };
 }
 
-/* ---------- sortable item card ---------- */
+/* ---------- sortable item ---------- */
 function Item({ item, areaId, monthIdx, accent, edit, handlers }) {
-  const {
-    attributes, listeners, setNodeRef, transform, transition, isDragging,
-  } = useSortable({ id: item.id, data: { areaId, monthIdx }, disabled: !edit });
-
-  const style = {
-    transform: CSS.Translate.toString(transform),
-    transition,
-    "--a": accent,
-  };
-
-  const commit = (field, idx) => (e) => {
-    handlers.onEdit(item.id, field, e.target.textContent.trim(), idx);
-  };
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: item.id, data: { areaId, monthIdx }, disabled: !edit });
+  const style = { transform: CSS.Translate.toString(transform), transition, "--a": accent };
+  const commit = (field, idx) => (e) => handlers.onEdit(item.id, field, e.target.textContent.trim(), idx);
 
   return (
     <div
@@ -45,46 +41,24 @@ function Item({ item, areaId, monthIdx, accent, edit, handlers }) {
       {...(edit ? { ...listeners, ...attributes } : {})}
     >
       {item.hardDate && (
-        <div className="hard-date" title="Hard date">
-          <span className="pin">◆</span>{item.hardDate}
-        </div>
+        <div className="hard-date" title="Hard date"><span className="pin">◆</span>{item.hardDate}</div>
       )}
-
       <div
-        className="ititle"
-        contentEditable={edit}
-        suppressContentEditableWarning
-        spellCheck={false}
-        onBlur={commit("text")}
-        onPointerDown={(e) => edit && e.stopPropagation()}
-      >
-        {item.text}
-      </div>
-
+        className="ititle" contentEditable={edit} suppressContentEditableWarning spellCheck={false}
+        onBlur={commit("text")} onPointerDown={(e) => edit && e.stopPropagation()}
+      >{item.text}</div>
       {item.sub?.length > 0 && (
         <ul className="subs">
           {item.sub.map((s, i) => (
-            <li
-              key={i}
-              contentEditable={edit}
-              suppressContentEditableWarning
-              spellCheck={false}
-              onBlur={commit("sub", i)}
-              onPointerDown={(e) => edit && e.stopPropagation()}
-            >
-              {s}
-            </li>
+            <li key={i} contentEditable={edit} suppressContentEditableWarning spellCheck={false}
+              onBlur={commit("sub", i)} onPointerDown={(e) => edit && e.stopPropagation()}>{s}</li>
           ))}
         </ul>
       )}
-
       {edit && (
         <div className="ctrls" onPointerDown={(e) => e.stopPropagation()}>
-          <button
-            className={"date" + (item.hardDate ? " active" : "")}
-            title={item.hardDate ? "Edit / clear hard date" : "Set a hard date"}
-            onClick={() => handlers.onHardDate(item.id, item.hardDate)}
-          >◆</button>
+          <button className={"date" + (item.hardDate ? " active" : "")} title="Set/clear hard date"
+            onClick={() => handlers.onHardDate(item.id, item.hardDate)}>◆</button>
           <button title="Add sub-item" onClick={() => handlers.onAddSub(item.id)}>＋</button>
           <button className="del" title="Delete" onClick={() => handlers.onDelete(item.id)}>✕</button>
         </div>
@@ -93,79 +67,73 @@ function Item({ item, areaId, monthIdx, accent, edit, handlers }) {
   );
 }
 
-/* ---------- droppable + sortable cell ---------- */
-function Cell({ areaId, monthIdx, items, accent, edit, overCellId, handlers }) {
-  const cellId = `${areaId}::${monthIdx}`;
-  // a droppable wrapper id is the cell; sortable items live inside
-  const isMs = milestoneMonths.has(monthIdx);
-  const isTarget = overCellId === cellId;
-
-  return (
-    <div
-      className={
-        "cell" + (isMs ? " milestone" : "") + (isTarget ? " drop-target" : "") +
-        (items.length === 0 ? " empty" : "")
-      }
-      data-cell={cellId}
-    >
-      <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
-        {items.map((item) => (
-          <Item
-            key={item.id}
-            item={item}
-            areaId={areaId}
-            monthIdx={monthIdx}
-            accent={accent}
-            edit={edit}
-            handlers={handlers}
-          />
-        ))}
-        {/* invisible drop zone so empty cells can receive */}
-        <CellDropZone id={cellId} areaId={areaId} monthIdx={monthIdx} empty={items.length === 0} edit={edit} />
-      </SortableContext>
-      {items.length === 0 && !edit && <span className="empty-dot">·</span>}
-      {edit && (
-        <button className="add-item" onClick={() => handlers.onAddItem(areaId, monthIdx)}>＋ add</button>
-      )}
-    </div>
-  );
-}
-
-/* a thin sortable placeholder so empty cells are valid drop targets */
-import { useDroppable } from "@dnd-kit/core";
 function CellDropZone({ id, areaId, monthIdx, empty, edit }) {
   const { setNodeRef, isOver } = useDroppable({ id: "cell:" + id, data: { areaId, monthIdx, cell: true } });
   if (!edit) return null;
   return <div ref={setNodeRef} className={"cell-dropzone" + (empty ? " big" : "") + (isOver ? " over" : "")} />;
 }
 
-/* ---------- app ---------- */
+function Cell({ areaId, monthIdx, items, accent, edit, overCellId, milestone, handlers }) {
+  const cellId = `${areaId}::${monthIdx}`;
+  const isTarget = overCellId === cellId;
+  return (
+    <div className={"cell" + (milestone ? " milestone" : "") + (isTarget ? " drop-target" : "") + (items.length === 0 ? " empty" : "")}>
+      <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
+        {items.map((item) => (
+          <Item key={item.id} item={item} areaId={areaId} monthIdx={monthIdx} accent={accent} edit={edit} handlers={handlers} />
+        ))}
+        <CellDropZone id={cellId} areaId={areaId} monthIdx={monthIdx} empty={items.length === 0} edit={edit} />
+      </SortableContext>
+      {items.length === 0 && !edit && <span className="empty-dot">·</span>}
+      {edit && <button className="add-item" onClick={() => handlers.onAddItem(areaId, monthIdx)}>＋ add</button>}
+    </div>
+  );
+}
+
+/* ============================================================ */
 export default function App() {
-  const [board, setBoard] = useState(loadBoard);
+  const [store, setStore] = useState(loadStore);
   const [edit, setEdit] = useState(false);
   const [activeItem, setActiveItem] = useState(null);
   const [overCellId, setOverCellId] = useState(null);
   const [toast, setToast] = useState(null);
   const [scrolled, setScrolled] = useState(false);
+  const [dragFile, setDragFile] = useState(false);
+  const fileRef = useRef(null);
 
-  // show the compressed sticky bar once we scroll past the masthead toolbar
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  const active = store.roadmaps.find((r) => r.id === store.activeId) || store.roadmaps[0];
+  const board = active.board;
+  const months = board.months;
+  const milestoneMonths = useMemo(
+    () => new Set((board.milestones || []).map((m) => m.monthIndex)),
+    [board.milestones]
+  );
+  const msByMonth = useMemo(() => {
+    const m = {}; (board.milestones || []).forEach((x) => (m[x.monthIndex] = x)); return m;
+  }, [board.milestones]);
+
+  useEffect(() => {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch { /* quota */ }
+  }, [store]);
+
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 150);
     window.addEventListener("scroll", onScroll, { passive: true });
     onScroll();
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
-  const fileRef = useRef(null);
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const flash = (msg) => { setToast(msg); setTimeout(() => setToast(null), 1900); };
 
-  useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(board)); } catch { /* quota */ }
-  }, [board]);
-
-  const flash = (msg) => { setToast(msg); setTimeout(() => setToast(null), 1800); };
-
-  const update = (fn) => setBoard((b) => { const next = structuredClone(b); fn(next); return next; });
+  /* mutate the active board */
+  const setBoard = (fn) => setStore((s) => {
+    const next = structuredClone(s);
+    const a = next.roadmaps.find((r) => r.id === next.activeId);
+    fn(a.board);
+    return next;
+  });
 
   const locate = (b, itemId) => {
     for (const a of b.areas) for (const mi of Object.keys(a.months)) {
@@ -175,165 +143,208 @@ export default function App() {
     return null;
   };
 
-  /* ---------- mutations ---------- */
-  const editText = (itemId, field, text, idx) => update((b) => {
+  /* ---------- item mutations ---------- */
+  const editText = (itemId, field, text, idx) => setBoard((b) => {
     const loc = locate(b, itemId); if (!loc) return;
     if (field === "text") loc.item.text = text;
-    else if (field === "sub") {
-      if (text === "") loc.item.sub.splice(idx, 1); else loc.item.sub[idx] = text;
-    }
+    else if (field === "sub") { if (text === "") loc.item.sub.splice(idx, 1); else loc.item.sub[idx] = text; }
   });
-  const deleteItem = (itemId) => update((b) => {
-    const loc = locate(b, itemId); if (loc) loc.area.months[loc.mi].splice(loc.idx, 1);
-  });
-  const addSub = (itemId) => update((b) => {
-    const loc = locate(b, itemId); if (loc) loc.item.sub.push("New sub-item");
-  });
-  const addItem = (areaId, monthIdx) => update((b) => {
+  const deleteItem = (itemId) => setBoard((b) => { const l = locate(b, itemId); if (l) l.area.months[l.mi].splice(l.idx, 1); });
+  const addSub = (itemId) => setBoard((b) => { const l = locate(b, itemId); if (l) l.item.sub.push("New sub-item"); });
+  const addItem = (areaId, monthIdx) => setBoard((b) => {
     const area = b.areas.find((a) => a.id === areaId);
     (area.months[monthIdx] ||= []).push({ id: newId(), text: "New item", sub: [] });
   });
   const setHardDate = (itemId, current) => {
-    const val = prompt(
-      "Hard date for this item (e.g. “Sep 15”, “Q4”, “2026-09-15”).\nLeave blank to clear.",
-      current || ""
-    );
-    if (val === null) return; // cancelled
-    update((b) => { const loc = locate(b, itemId); if (loc) loc.item.hardDate = val.trim() || undefined; });
+    const val = prompt("Hard date (e.g. “Sep 15”, “Q4”). Blank to clear.", current || "");
+    if (val === null) return;
+    setBoard((b) => { const l = locate(b, itemId); if (l) l.item.hardDate = val.trim() || undefined; });
     flash(val.trim() ? "Hard date set" : "Hard date cleared");
   };
 
-  /* ---------- dnd ---------- */
-  const onDragStart = (e) => {
-    const loc = locate(board, e.active.id);
-    setActiveItem(loc?.item || null);
+  /* ---------- area mutations ---------- */
+  const addArea = () => setBoard((b) => {
+    b.areas.push({ id: "area-" + newId(), name: "New workstream", accent: nextAccent(b.areas.length), meta: null, months: {} });
+  });
+  const renameArea = (areaId, name) => setBoard((b) => { const a = b.areas.find((x) => x.id === areaId); if (a) a.name = name; });
+  const deleteArea = (areaId) => {
+    if (!confirm("Delete this workstream and all its items?")) return;
+    setBoard((b) => { b.areas = b.areas.filter((a) => a.id !== areaId); });
   };
+
+  /* ---------- dnd ---------- */
+  const onDragStart = (e) => { const l = locate(board, e.active.id); setActiveItem(l?.item || null); };
   const onDragOver = (e) => {
     const o = e.over; if (!o) { setOverCellId(null); return; }
-    // over can be an item or a cell-dropzone
-    const data = o.data.current;
-    if (data?.cell) setOverCellId(`${data.areaId}::${data.monthIdx}`);
-    else if (data) setOverCellId(`${data.areaId}::${data.monthIdx}`);
+    const d = o.data.current; if (d) setOverCellId(`${d.areaId}::${d.monthIdx}`);
   };
   const onDragEnd = (e) => {
     setActiveItem(null); setOverCellId(null);
-    const { active, over } = e;
-    if (!over) return;
-    update((b) => {
-      const from = locate(b, active.id);
-      if (!from) return;
-      const od = over.data.current;
-      let toAreaId, toMonth, beforeId = null;
-      if (od?.cell) { toAreaId = od.areaId; toMonth = od.monthIdx; }
-      else if (od) { toAreaId = od.areaId; toMonth = od.monthIdx; beforeId = over.id; }
-      else return;
-
+    const { active: act, over } = e; if (!over) return;
+    setBoard((b) => {
+      const from = locate(b, act.id); if (!from) return;
+      const od = over.data.current; if (!od) return;
+      const toAreaId = od.areaId, toMonth = od.monthIdx, beforeId = od.cell ? null : over.id;
       const sameCell = from.area.id === toAreaId && from.mi === toMonth;
-      const srcArr = from.area.months[from.mi];
-      const [moved] = srcArr.splice(from.idx, 1);
+      const [moved] = from.area.months[from.mi].splice(from.idx, 1);
       const toArea = b.areas.find((a) => a.id === toAreaId);
-      const dstArr = (toArea.months[toMonth] ||= []);
-
-      if (beforeId && beforeId !== active.id) {
-        const insertAt = dstArr.findIndex((x) => x.id === beforeId);
-        dstArr.splice(insertAt < 0 ? dstArr.length : insertAt, 0, moved);
-      } else if (sameCell && beforeId === active.id) {
-        // dropped on itself — restore
-        dstArr.splice(from.idx, 0, moved);
-      } else {
-        dstArr.push(moved);
-      }
+      const dst = (toArea.months[toMonth] ||= []);
+      if (beforeId && beforeId !== act.id) {
+        const at = dst.findIndex((x) => x.id === beforeId);
+        dst.splice(at < 0 ? dst.length : at, 0, moved);
+      } else if (sameCell && beforeId === act.id) {
+        dst.splice(from.idx, 0, moved);
+      } else dst.push(moved);
     });
   };
 
-  /* ---------- export / import / reset ---------- */
+  /* ---------- roadmap management ---------- */
+  const newRoadmap = () => setStore((s) => {
+    const r = { id: "rm-" + newId(), name: "Untitled roadmap", board: emptyBoard() };
+    return { roadmaps: [...s.roadmaps, r], activeId: r.id };
+  });
+  const switchRoadmap = (id) => setStore((s) => ({ ...s, activeId: id }));
+  const renameRoadmap = (id) => {
+    const cur = store.roadmaps.find((r) => r.id === id);
+    const name = prompt("Roadmap name:", cur?.name || "");
+    if (name == null) return;
+    setStore((s) => ({ ...s, roadmaps: s.roadmaps.map((r) => r.id === id ? { ...r, name: name.trim() || r.name } : r) }));
+  };
+  const deleteRoadmap = (id) => {
+    if (store.roadmaps.length === 1) { flash("Keep at least one roadmap"); return; }
+    if (!confirm("Delete this roadmap? This can't be undone.")) return;
+    setStore((s) => {
+      const roadmaps = s.roadmaps.filter((r) => r.id !== id);
+      return { roadmaps, activeId: s.activeId === id ? roadmaps[0].id : s.activeId };
+    });
+  };
+
+  /* ---------- import / export ---------- */
+  const importBoard = (raw, name) => {
+    const res = normalizeBoard(raw);
+    if (!res.ok) { flash("Import failed — " + res.error); return; }
+    setStore((s) => {
+      const r = { id: "rm-" + newId(), name: name || "Imported roadmap", board: res.board };
+      return { roadmaps: [...s.roadmaps, r], activeId: r.id };
+    });
+    flash("Imported as a new roadmap");
+  };
+  const importFile = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try { importBoard(JSON.parse(reader.result), file.name.replace(/\.json$/i, "")); }
+      catch { flash("Import failed — invalid JSON"); }
+    };
+    reader.readAsText(file);
+  };
+  const onFileInput = (e) => { importFile(e.target.files?.[0]); e.target.value = ""; };
+
   const exportJSON = () => {
     const blob = new Blob([JSON.stringify(board, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob); const a = document.createElement("a");
-    a.href = url; a.download = "air-billing-roadmap.json"; a.click(); URL.revokeObjectURL(url);
-    flash("Exported air-billing-roadmap.json");
-  };
-  const importJSON = (e) => {
-    const file = e.target.files?.[0]; if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => { try { setBoard(JSON.parse(reader.result)); flash("Imported roadmap"); } catch { flash("Import failed — invalid JSON"); } };
-    reader.readAsText(file); e.target.value = "";
-  };
-  const resetBoard = () => {
-    if (confirm("Reset to the original roadmap? Your edits will be lost.")) { setBoard(seedBoard()); flash("Reset to original"); }
+    a.href = url; a.download = (active.name || "roadmap").replace(/\s+/g, "-").toLowerCase() + ".json";
+    a.click(); URL.revokeObjectURL(url);
+    flash("Exported " + a.download);
   };
 
-  const handlers = {
-    onEdit: editText, onDelete: deleteItem, onAddSub: addSub,
-    onAddItem: addItem, onHardDate: setHardDate,
+  /* ---------- whole-window file drop ---------- */
+  const onDrop = (e) => {
+    e.preventDefault(); setDragFile(false);
+    const file = [...(e.dataTransfer?.files || [])].find((f) => f.name.endsWith(".json") || f.type === "application/json");
+    if (file) importFile(file); else flash("Drop a .json roadmap file");
   };
+  const onDragEnterWin = (e) => { if ([...(e.dataTransfer?.types || [])].includes("Files")) { e.preventDefault(); setDragFile(true); } };
+  const onDragOverWin = (e) => { if (dragFile) e.preventDefault(); };
+  const onDragLeaveWin = (e) => { if (e.clientX <= 0 && e.clientY <= 0) setDragFile(false); };
 
-  const msByMonth = useMemo(() => {
-    const m = {}; MILESTONES.forEach((x) => (m[x.monthIndex] = x)); return m;
-  }, []);
+  const handlers = { onEdit: editText, onDelete: deleteItem, onAddSub: addSub, onAddItem: addItem, onHardDate: setHardDate };
 
   return (
-    <div className={"app" + (edit ? " editmode" : "") + (scrolled ? " scrolled" : "")}>
-      {/* compressed sticky bar — appears on scroll, signals edit state */}
+    <div
+      className={"app" + (edit ? " editmode" : "") + (scrolled ? " scrolled" : "")}
+      onDrop={onDrop} onDragEnter={onDragEnterWin} onDragOver={onDragOverWin} onDragLeave={onDragLeaveWin}
+    >
+      {/* sticky bar */}
       <div className={"stickybar" + (scrolled ? " show" : "") + (edit ? " editing" : "")}>
-        <div className="sb-brand">
-          <span className="sb-mark">◆</span>
-          <span className="sb-title">Self-Serve Roadmap</span>
-        </div>
+        <div className="sb-brand"><span className="sb-mark">◆</span><span className="sb-title">{active.name}</span></div>
         <button className={"btn" + (edit ? " on" : "")} onClick={() => setEdit((v) => !v)}>
           <span className="dot" /> {edit ? "Editing" : "Edit mode"}
         </button>
         <button className="btn ghost" onClick={exportJSON}>⤓ Export</button>
         <button className="btn ghost" onClick={() => fileRef.current?.click()}>⤒ Import</button>
-        <button className="btn ghost" onClick={resetBoard}>↺ Reset</button>
         <span className="spacer" />
-        <span className="sb-hint">{edit ? "drag · ◆ date · click to edit · ＋ ✕" : "view mode"}</span>
-        <button className="btn ghost sb-top" title="Back to top" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>↑</button>
+        <span className="sb-hint">{edit ? "drag · ◆ date · click to edit" : "view mode"}</span>
+        <button className="btn ghost sb-top" title="Top" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>↑</button>
       </div>
 
+      {/* masthead */}
       <header className="masthead">
-        <p className="eyebrow">Air Billing · Internal Milestones V0</p>
-        <h1>The <em>Self-Serve</em> Roadmap</h1>
+        <p className="eyebrow">Roadmap Studio</p>
+        <h1 className="editable-h1" contentEditable={edit} suppressContentEditableWarning spellCheck={false}
+          onBlur={(e) => renameRoadmap_inline(e.target.textContent.trim())}
+          title={edit ? "Click to rename" : undefined}>
+          {active.name}
+        </h1>
         <p className="lede">
-          Ten months, eight workstreams, three milestones. In edit mode, drag a card to another
-          month, reorder it within a column, or pin a hard date. Everything saves to this browser.
+          A roadmap is a JSON you bring. Drop a <code>.json</code> file anywhere to load it,
+          start from the skeleton below, or switch between saved roadmaps. Everything saves to this browser.
         </p>
+
+        {/* roadmap switcher */}
+        <div className="rm-bar">
+          {store.roadmaps.map((r) => (
+            <button
+              key={r.id}
+              className={"rm-tab" + (r.id === store.activeId ? " on" : "")}
+              onClick={() => switchRoadmap(r.id)}
+              onDoubleClick={() => renameRoadmap(r.id)}
+              title="Click to open · double-click to rename"
+            >
+              {r.name}
+              {r.id === store.activeId && store.roadmaps.length > 1 && (
+                <span className="rm-x" title="Delete roadmap" onClick={(e) => { e.stopPropagation(); deleteRoadmap(r.id); }}>✕</span>
+              )}
+            </button>
+          ))}
+          <button className="rm-tab add" onClick={newRoadmap} title="New roadmap">＋</button>
+        </div>
+
         <div className="toolbar">
           <button className={"btn" + (edit ? " on" : "")} onClick={() => setEdit((v) => !v)}>
             <span className="dot" /> {edit ? "Editing — click to lock" : "Edit mode"}
           </button>
           <button className="btn" onClick={exportJSON}>⤓ Export</button>
-          <button className="btn" onClick={() => fileRef.current?.click()}>⤒ Import</button>
-          <input ref={fileRef} type="file" accept="application/json" hidden onChange={importJSON} />
-          <button className="btn" onClick={resetBoard}>↺ Reset</button>
+          <button className="btn" onClick={() => fileRef.current?.click()}>⤒ Import JSON</button>
+          <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={onFileInput} />
           <span className="spacer" />
-          <span className="hint">{edit ? "drag to move/reorder · ◆ hard date · click text to edit · ＋ / ✕" : "view mode — toggle Edit to re-plan"}</span>
+          <span className="hint">{edit ? "drag to move/reorder · ◆ hard date · click text to edit · ＋ / ✕" : "view mode — toggle Edit to plan"}</span>
         </div>
       </header>
 
-      <section className="milestones">
-        {MILESTONES.map((m) => (
-          <div className="ms-card" key={m.id}>
-            <div className="num">{m.label} · {m.date}</div>
-            <div className="date">{m.date}</div>
-            <div className="title">{m.title}</div>
-          </div>
-        ))}
-      </section>
+      {/* milestone banner (only if the board defines milestones) */}
+      {(board.milestones?.length > 0) && (
+        <section className="milestones">
+          {board.milestones.map((m) => (
+            <div className="ms-card" key={m.id || m.label}>
+              <div className="num">{m.label}{m.date ? " · " + m.date : ""}</div>
+              <div className="date">{m.date || months[m.monthIndex] || "—"}</div>
+              <div className="title">{m.title}</div>
+            </div>
+          ))}
+        </section>
+      )}
 
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCorners}
-        onDragStart={onDragStart}
-        onDragOver={onDragOver}
-        onDragEnd={onDragEnd}
-      >
+      {/* board */}
+      <DndContext sensors={sensors} collisionDetection={closestCorners}
+        onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd}>
         <div className="board-wrap">
-          <div className="board with-guides">
+          <div className="board"
+            style={{ gridTemplateColumns: `var(--row-label-w) repeat(${months.length}, var(--col-w))` }}>
             <div className="month-head corner">
               <div className="mlabel" style={{ fontSize: 15, color: "var(--ink-dim)" }}>Workstream</div>
             </div>
-            {MONTHS.map((mo, i) => (
+            {months.map((mo, i) => (
               <div key={i} className={"month-head" + (msByMonth[i] ? " milestone" : "")}>
                 <div className="mlabel">{mo}</div>
                 <div className="msub">{msByMonth[i] ? msByMonth[i].label : `month ${i + 1}`}</div>
@@ -342,30 +353,32 @@ export default function App() {
 
             {board.areas.map((area, ai) => (
               <React.Fragment key={area.id}>
-                <div className="area-label area-row" style={{ animationDelay: `${ai * 55}ms`, "--a": area.accent }}>
+                <div className="area-label area-row" style={{ animationDelay: `${ai * 50}ms`, "--a": area.accent }}>
                   <div className="aname">
                     <span className="swatch" style={{ background: area.accent }} />
-                    {area.name}
+                    <span contentEditable={edit} suppressContentEditableWarning spellCheck={false}
+                      className="aname-text"
+                      onBlur={(e) => renameArea(area.id, e.target.textContent.trim())}>{area.name}</span>
                   </div>
                   {area.meta?.subtitle && <div className="asub">{area.meta.subtitle}</div>}
                   {area.meta?.dris?.length > 0 && (
                     <div className="dris">{area.meta.dris.map((d) => <span className="dri" key={d}>{d}</span>)}</div>
                   )}
+                  {edit && <button className="area-del" onClick={() => deleteArea(area.id)} title="Delete workstream">✕ remove</button>}
                 </div>
-                {MONTHS.map((_, mi) => (
-                  <Cell
-                    key={mi}
-                    areaId={area.id}
-                    monthIdx={mi}
-                    items={area.months[mi] || []}
-                    accent={area.accent}
-                    edit={edit}
-                    overCellId={overCellId}
-                    handlers={handlers}
-                  />
+                {months.map((_, mi) => (
+                  <Cell key={mi} areaId={area.id} monthIdx={mi} items={area.months[mi] || []}
+                    accent={area.accent} edit={edit} overCellId={overCellId}
+                    milestone={milestoneMonths.has(mi)} handlers={handlers} />
                 ))}
               </React.Fragment>
             ))}
+
+            {edit && (
+              <div className="add-area-row" style={{ gridColumn: `1 / -1` }}>
+                <button className="add-area" onClick={addArea}>＋ Add workstream</button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -375,9 +388,7 @@ export default function App() {
               <div className={"item" + (activeItem.hardDate ? " pinned" : "")} style={{ "--a": "#e9b949", width: 248 }}>
                 {activeItem.hardDate && <div className="hard-date"><span className="pin">◆</span>{activeItem.hardDate}</div>}
                 <div className="ititle">{activeItem.text}</div>
-                {activeItem.sub?.length > 0 && (
-                  <ul className="subs">{activeItem.sub.slice(0, 3).map((s, i) => <li key={i}>{s}</li>)}</ul>
-                )}
+                {activeItem.sub?.length > 0 && <ul className="subs">{activeItem.sub.slice(0, 3).map((s, i) => <li key={i}>{s}</li>)}</ul>}
               </div>
             </div>
           ) : null}
@@ -385,10 +396,23 @@ export default function App() {
       </DndContext>
 
       <footer className="foot">
-        Air Billing Self-Serve · Internal Milestones V0 · saved locally · {board.areas.length} workstreams
+        Roadmap Studio · {store.roadmaps.length} roadmap{store.roadmaps.length > 1 ? "s" : ""} · saved locally · drop a .json to import
       </footer>
+
+      {/* file drop overlay */}
+      {dragFile && (
+        <div className="dropzone-overlay">
+          <div className="dz-card"><div className="dz-icon">⤓</div><div className="dz-text">Drop a <b>.json</b> roadmap to load it</div></div>
+        </div>
+      )}
 
       {toast && <div className="toast">{toast}</div>}
     </div>
   );
+
+  // inline H1 rename helper (kept inside to capture active.id)
+  function renameRoadmap_inline(name) {
+    if (!name || name === active.name) return;
+    setStore((s) => ({ ...s, roadmaps: s.roadmaps.map((r) => r.id === active.id ? { ...r, name } : r) }));
+  }
 }
