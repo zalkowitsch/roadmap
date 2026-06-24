@@ -179,7 +179,9 @@ body::before {
   text-transform: uppercase; color: var(--ink-faint); margin-top: 2px;
 }
 .month-head.milestone {
-  background: linear-gradient(180deg, rgba(233,185,73,.12), transparent);
+  background:
+    linear-gradient(180deg, rgba(233,185,73,.12), transparent),
+    var(--bg);
 }
 .month-head.milestone .mlabel { color: var(--gold); }
 .month-head.milestone .msub { color: var(--gold); opacity: .8; }
@@ -340,3 +342,66 @@ body::before {
 .board-wrap::-webkit-scrollbar { height: 11px; }
 .board-wrap::-webkit-scrollbar-thumb { background: #2c2f38; border-radius: 6px; border: 3px solid var(--bg); }
 .board-wrap::-webkit-scrollbar-track { background: transparent; }
+
+/* ============================================================
+   Compressed sticky bar — edit-state indicator on scroll
+   ============================================================ */
+.stickybar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 50;
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px clamp(20px, 4vw, 48px);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: saturate(1.4) blur(14px);
+  border-bottom: 1px solid var(--line);
+  transform: translateY(-100%);
+  opacity: 0;
+  transition: transform .32s cubic-bezier(.16,.84,.44,1), opacity .25s ease, border-color .25s, box-shadow .25s;
+  pointer-events: none;
+}
+.stickybar.show {
+  transform: translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+/* the loud signal: editing → gold top rail + glow */
+.stickybar.editing {
+  border-bottom-color: var(--gold);
+  box-shadow: inset 0 2px 0 var(--gold), 0 10px 30px rgba(0,0,0,.4);
+  background:
+    linear-gradient(180deg, rgba(233,185,73,.10), transparent 60%),
+    color-mix(in srgb, var(--bg) 80%, transparent);
+}
+.stickybar.editing::before {
+  content: ""; position: absolute; left: 0; top: 0; height: 2px; right: 0;
+  background: linear-gradient(90deg, transparent, var(--gold), transparent);
+  animation: railpulse 2.4s ease-in-out infinite;
+}
+@keyframes railpulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+
+.stickybar .sb-brand { display: flex; align-items: center; gap: 8px; margin-right: 6px; }
+.stickybar .sb-mark {
+  color: var(--gold); font-size: 13px;
+  transition: transform .3s ease;
+}
+.stickybar.editing .sb-mark { animation: spin 6s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.stickybar .sb-title {
+  font-family: var(--font-display); font-weight: 400; font-size: 16px;
+  letter-spacing: -.01em; white-space: nowrap;
+}
+.stickybar .btn { padding: 7px 12px; }
+.stickybar .btn.ghost { background: transparent; }
+.stickybar .btn.ghost:hover { background: var(--bg-raised); }
+.stickybar .sb-hint {
+  font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint);
+  letter-spacing: .02em; white-space: nowrap;
+}
+.stickybar .sb-top { width: 34px; padding: 7px 0; justify-content: center; }
+
+/* when the sticky bar is shown, drop the board's sticky month-heads below it
+   so they don't collide with the bar */
+.app.scrolled .month-head { top: 54px; }
+
+@media (max-width: 720px) {
+  .stickybar .sb-hint, .stickybar .sb-title { display: none; }
+}

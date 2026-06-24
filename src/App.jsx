@@ -146,6 +146,15 @@ export default function App() {
   const [activeItem, setActiveItem] = useState(null);
   const [overCellId, setOverCellId] = useState(null);
   const [toast, setToast] = useState(null);
+  const [scrolled, setScrolled] = useState(false);
+
+  // show the compressed sticky bar once we scroll past the masthead toolbar
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 150);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
   const fileRef = useRef(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
@@ -264,7 +273,24 @@ export default function App() {
   }, []);
 
   return (
-    <div className={"app" + (edit ? " editmode" : "")}>
+    <div className={"app" + (edit ? " editmode" : "") + (scrolled ? " scrolled" : "")}>
+      {/* compressed sticky bar — appears on scroll, signals edit state */}
+      <div className={"stickybar" + (scrolled ? " show" : "") + (edit ? " editing" : "")}>
+        <div className="sb-brand">
+          <span className="sb-mark">◆</span>
+          <span className="sb-title">Self-Serve Roadmap</span>
+        </div>
+        <button className={"btn" + (edit ? " on" : "")} onClick={() => setEdit((v) => !v)}>
+          <span className="dot" /> {edit ? "Editing" : "Edit mode"}
+        </button>
+        <button className="btn ghost" onClick={exportJSON}>⤓ Export</button>
+        <button className="btn ghost" onClick={() => fileRef.current?.click()}>⤒ Import</button>
+        <button className="btn ghost" onClick={resetBoard}>↺ Reset</button>
+        <span className="spacer" />
+        <span className="sb-hint">{edit ? "drag · ◆ date · click to edit · ＋ ✕" : "view mode"}</span>
+        <button className="btn ghost sb-top" title="Back to top" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>↑</button>
+      </div>
+
       <header className="masthead">
         <p className="eyebrow">Air Billing · Internal Milestones V0</p>
         <h1>The <em>Self-Serve</em> Roadmap</h1>
