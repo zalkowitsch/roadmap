@@ -7,6 +7,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { emptyBoard, normalizeBoard, nextAccent, newId } from "./data.js";
+import { Button, IconButton, Chip, Row, Spacer, EditableText } from "./ds";
 
 const STORE_KEY = "roadmaps:v1";
 
@@ -27,11 +28,10 @@ function loadStore() {
 }
 
 /* ---------- sortable item ---------- */
-function Item({ item, areaId, monthIdx, accent, edit, handlers }) {
+function Item({ item, areaId, monthIdx, accent, edit, autoFocus, handlers }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: item.id, data: { areaId, monthIdx }, disabled: !edit });
   const style = { transform: CSS.Translate.toString(transform), transition, "--a": accent };
-  const commit = (field, idx) => (e) => handlers.onEdit(item.id, field, e.target.textContent.trim(), idx);
 
   return (
     <div
@@ -43,24 +43,37 @@ function Item({ item, areaId, monthIdx, accent, edit, handlers }) {
       {item.hardDate && (
         <div className="hard-date" title="Hard date"><span className="pin">◆</span>{item.hardDate}</div>
       )}
-      <div
-        className="ititle" contentEditable={edit} suppressContentEditableWarning spellCheck={false}
-        onBlur={commit("text")} onPointerDown={(e) => edit && e.stopPropagation()}
-      >{item.text}</div>
+      <EditableText
+        className="ititle"
+        value={item.text}
+        placeholder="New item"
+        editable={edit}
+        autoFocus={autoFocus}
+        stopPointer
+        onCommit={(t) => handlers.onEdit(item.id, "text", t)}
+      />
       {item.sub?.length > 0 && (
         <ul className="subs">
           {item.sub.map((s, i) => (
-            <li key={i} contentEditable={edit} suppressContentEditableWarning spellCheck={false}
-              onBlur={commit("sub", i)} onPointerDown={(e) => edit && e.stopPropagation()}>{s}</li>
+            <EditableText
+              key={i}
+              as="li"
+              value={s}
+              placeholder="New sub-item"
+              editable={edit}
+              autoFocus={item._focusSub === i}
+              stopPointer
+              onCommit={(t) => handlers.onEdit(item.id, "sub", t, i)}
+            />
           ))}
         </ul>
       )}
       {edit && (
         <div className="ctrls" onPointerDown={(e) => e.stopPropagation()}>
-          <button className={"date" + (item.hardDate ? " active" : "")} title="Set/clear hard date"
-            onClick={() => handlers.onHardDate(item.id, item.hardDate)}>◆</button>
-          <button title="Add sub-item" onClick={() => handlers.onAddSub(item.id)}>＋</button>
-          <button className="del" title="Delete" onClick={() => handlers.onDelete(item.id)}>✕</button>
+          <IconButton active={!!item.hardDate} title="Set/clear hard date"
+            onClick={() => handlers.onHardDate(item.id, item.hardDate)}>◆</IconButton>
+          <IconButton title="Add sub-item" onClick={() => handlers.onAddSub(item.id)}>＋</IconButton>
+          <IconButton tone="danger" title="Delete" onClick={() => handlers.onDelete(item.id)}>✕</IconButton>
         </div>
       )}
     </div>
@@ -73,19 +86,20 @@ function CellDropZone({ id, areaId, monthIdx, empty, edit }) {
   return <div ref={setNodeRef} className={"cell-dropzone" + (empty ? " big" : "") + (isOver ? " over" : "")} />;
 }
 
-function Cell({ areaId, monthIdx, items, accent, edit, overCellId, milestone, handlers }) {
+function Cell({ areaId, monthIdx, items, accent, edit, overCellId, milestone, justAddedId, handlers }) {
   const cellId = `${areaId}::${monthIdx}`;
   const isTarget = overCellId === cellId;
   return (
     <div className={"cell" + (milestone ? " milestone" : "") + (isTarget ? " drop-target" : "") + (items.length === 0 ? " empty" : "")}>
       <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
         {items.map((item) => (
-          <Item key={item.id} item={item} areaId={areaId} monthIdx={monthIdx} accent={accent} edit={edit} handlers={handlers} />
+          <Item key={item.id} item={item} areaId={areaId} monthIdx={monthIdx} accent={accent}
+            edit={edit} autoFocus={justAddedId === item.id} handlers={handlers} />
         ))}
         <CellDropZone id={cellId} areaId={areaId} monthIdx={monthIdx} empty={items.length === 0} edit={edit} />
       </SortableContext>
       {items.length === 0 && !edit && <span className="empty-dot">·</span>}
-      {edit && <button className="add-item" onClick={() => handlers.onAddItem(areaId, monthIdx)}>＋ add</button>}
+      {edit && <Button variant="dashed" className="add-item" onClick={() => handlers.onAddItem(areaId, monthIdx)}>＋ add</Button>}
     </div>
   );
 }
@@ -99,6 +113,8 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [scrolled, setScrolled] = useState(false);
   const [dragFile, setDragFile] = useState(false);
+  // id of the node (item or area) just created — gets autofocus once, then cleared
+  const [justAddedId, setJustAddedId] = useState(null);
   const fileRef = useRef(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
@@ -125,6 +141,13 @@ export default function App() {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
+  // clear the autofocus marker after it's been consumed by the mounted node
+  useEffect(() => {
+    if (!justAddedId) return;
+    const t = setTimeout(() => setJustAddedId(null), 300);
+    return () => clearTimeout(t);
+  }, [justAddedId]);
+
   const flash = (msg) => { setToast(msg); setTimeout(() => setToast(null), 1900); };
 
   /* mutate the active board */
@@ -148,13 +171,22 @@ export default function App() {
     const loc = locate(b, itemId); if (!loc) return;
     if (field === "text") loc.item.text = text;
     else if (field === "sub") { if (text === "") loc.item.sub.splice(idx, 1); else loc.item.sub[idx] = text; }
+    if (loc.item._focusSub != null) delete loc.item._focusSub;
   });
   const deleteItem = (itemId) => setBoard((b) => { const l = locate(b, itemId); if (l) l.area.months[l.mi].splice(l.idx, 1); });
-  const addSub = (itemId) => setBoard((b) => { const l = locate(b, itemId); if (l) l.item.sub.push("New sub-item"); });
-  const addItem = (areaId, monthIdx) => setBoard((b) => {
-    const area = b.areas.find((a) => a.id === areaId);
-    (area.months[monthIdx] ||= []).push({ id: newId(), text: "New item", sub: [] });
+  const addSub = (itemId) => setBoard((b) => {
+    const l = locate(b, itemId); if (!l) return;
+    l.item.sub.push("");
+    l.item._focusSub = l.item.sub.length - 1; // focus the new sub-item
   });
+  const addItem = (areaId, monthIdx) => {
+    const id = newId();
+    setBoard((b) => {
+      const area = b.areas.find((a) => a.id === areaId);
+      (area.months[monthIdx] ||= []).push({ id, text: "", sub: [] });
+    });
+    setJustAddedId(id); // triggers autoFocus on the new card's title
+  };
   const setHardDate = (itemId, current) => {
     const val = prompt("Hard date (e.g. “Sep 15”, “Q4”). Blank to clear.", current || "");
     if (val === null) return;
@@ -163,9 +195,13 @@ export default function App() {
   };
 
   /* ---------- area mutations ---------- */
-  const addArea = () => setBoard((b) => {
-    b.areas.push({ id: "area-" + newId(), name: "New workstream", accent: nextAccent(b.areas.length), meta: null, months: {} });
-  });
+  const addArea = () => {
+    const id = "area-" + newId();
+    setBoard((b) => {
+      b.areas.push({ id, name: "", accent: nextAccent(b.areas.length), meta: null, months: {} });
+    });
+    setJustAddedId(id); // focus the new workstream's name
+  };
   const renameArea = (areaId, name) => setBoard((b) => { const a = b.areas.find((x) => x.id === areaId); if (a) a.name = name; });
   const deleteArea = (areaId) => {
     if (!confirm("Delete this workstream and all its items?")) return;
@@ -267,25 +303,27 @@ export default function App() {
     >
       {/* sticky bar */}
       <div className={"stickybar" + (scrolled ? " show" : "") + (edit ? " editing" : "")}>
-        <div className="sb-brand"><span className="sb-mark">◆</span><span className="sb-title">{active.name}</span></div>
-        <button className={"btn" + (edit ? " on" : "")} onClick={() => setEdit((v) => !v)}>
-          <span className="dot" /> {edit ? "Editing" : "Edit mode"}
-        </button>
-        <button className="btn ghost" onClick={exportJSON}>⤓ Export</button>
-        <button className="btn ghost" onClick={() => fileRef.current?.click()}>⤒ Import</button>
-        <span className="spacer" />
+        <div className="sb-brand"><span className="sb-mark">◆</span><span className="sb-title">{active.name || "Untitled roadmap"}</span></div>
+        <Button variant="ghost" active={edit} dot onClick={() => setEdit((v) => !v)}>{edit ? "Editing" : "Edit mode"}</Button>
+        <Button variant="ghost" onClick={exportJSON}>⤓ Export</Button>
+        <Button variant="ghost" onClick={() => fileRef.current?.click()}>⤒ Import</Button>
+        <Spacer />
         <span className="sb-hint">{edit ? "drag · ◆ date · click to edit" : "view mode"}</span>
-        <button className="btn ghost sb-top" title="Top" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>↑</button>
+        <Button variant="ghost" className="sb-top" title="Top" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>↑</Button>
       </div>
 
       {/* masthead */}
       <header className="masthead">
         <p className="eyebrow">Roadmap Studio</p>
-        <h1 className="editable-h1" contentEditable={edit} suppressContentEditableWarning spellCheck={false}
-          onBlur={(e) => renameRoadmap_inline(e.target.textContent.trim())}
-          title={edit ? "Click to rename" : undefined}>
-          {active.name}
-        </h1>
+        <EditableText
+          as="h1"
+          className="editable-h1"
+          value={active.name}
+          placeholder="Untitled roadmap"
+          editable={edit}
+          onCommit={(t) => renameRoadmap_inline(t)}
+          title={edit ? "Click to rename" : undefined}
+        />
         <p className="lede">
           A roadmap is a JSON you bring. Drop a <code>.json</code> file anywhere to load it,
           start from the skeleton below, or switch between saved roadmaps. Everything saves to this browser.
@@ -301,7 +339,7 @@ export default function App() {
               onDoubleClick={() => renameRoadmap(r.id)}
               title="Click to open · double-click to rename"
             >
-              {r.name}
+              {r.name || "Untitled roadmap"}
               {r.id === store.activeId && store.roadmaps.length > 1 && (
                 <span className="rm-x" title="Delete roadmap" onClick={(e) => { e.stopPropagation(); deleteRoadmap(r.id); }}>✕</span>
               )}
@@ -310,16 +348,14 @@ export default function App() {
           <button className="rm-tab add" onClick={newRoadmap} title="New roadmap">＋</button>
         </div>
 
-        <div className="toolbar">
-          <button className={"btn" + (edit ? " on" : "")} onClick={() => setEdit((v) => !v)}>
-            <span className="dot" /> {edit ? "Editing — click to lock" : "Edit mode"}
-          </button>
-          <button className="btn" onClick={exportJSON}>⤓ Export</button>
-          <button className="btn" onClick={() => fileRef.current?.click()}>⤒ Import JSON</button>
+        <Row wrap gap={3} className="toolbar">
+          <Button active={edit} dot onClick={() => setEdit((v) => !v)}>{edit ? "Editing — click to lock" : "Edit mode"}</Button>
+          <Button onClick={exportJSON}>⤓ Export</Button>
+          <Button onClick={() => fileRef.current?.click()}>⤒ Import JSON</Button>
           <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={onFileInput} />
-          <span className="spacer" />
+          <Spacer />
           <span className="hint">{edit ? "drag to move/reorder · ◆ hard date · click text to edit · ＋ / ✕" : "view mode — toggle Edit to plan"}</span>
-        </div>
+        </Row>
       </header>
 
       {/* milestone banner (only if the board defines milestones) */}
@@ -356,27 +392,32 @@ export default function App() {
                 <div className="area-label area-row" style={{ animationDelay: `${ai * 50}ms`, "--a": area.accent }}>
                   <div className="aname">
                     <span className="swatch" style={{ background: area.accent }} />
-                    <span contentEditable={edit} suppressContentEditableWarning spellCheck={false}
+                    <EditableText
                       className="aname-text"
-                      onBlur={(e) => renameArea(area.id, e.target.textContent.trim())}>{area.name}</span>
+                      value={area.name}
+                      placeholder="New workstream"
+                      editable={edit}
+                      autoFocus={justAddedId === area.id}
+                      onCommit={(t) => renameArea(area.id, t)}
+                    />
                   </div>
                   {area.meta?.subtitle && <div className="asub">{area.meta.subtitle}</div>}
                   {area.meta?.dris?.length > 0 && (
-                    <div className="dris">{area.meta.dris.map((d) => <span className="dri" key={d}>{d}</span>)}</div>
+                    <Row wrap gap={2} className="dris">{area.meta.dris.map((d) => <Chip key={d}>{d}</Chip>)}</Row>
                   )}
-                  {edit && <button className="area-del" onClick={() => deleteArea(area.id)} title="Delete workstream">✕ remove</button>}
+                  {edit && <Button variant="dashed" className="area-del" onClick={() => deleteArea(area.id)} title="Delete workstream">✕ remove</Button>}
                 </div>
                 {months.map((_, mi) => (
                   <Cell key={mi} areaId={area.id} monthIdx={mi} items={area.months[mi] || []}
                     accent={area.accent} edit={edit} overCellId={overCellId}
-                    milestone={milestoneMonths.has(mi)} handlers={handlers} />
+                    milestone={milestoneMonths.has(mi)} justAddedId={justAddedId} handlers={handlers} />
                 ))}
               </React.Fragment>
             ))}
 
             {edit && (
               <div className="add-area-row" style={{ gridColumn: `1 / -1` }}>
-                <button className="add-area" onClick={addArea}>＋ Add workstream</button>
+                <Button variant="dashed" className="add-area" onClick={addArea}>＋ Add workstream</Button>
               </div>
             )}
           </div>
@@ -387,7 +428,7 @@ export default function App() {
             <div className="drag-overlay">
               <div className={"item" + (activeItem.hardDate ? " pinned" : "")} style={{ "--a": "#e9b949", width: 248 }}>
                 {activeItem.hardDate && <div className="hard-date"><span className="pin">◆</span>{activeItem.hardDate}</div>}
-                <div className="ititle">{activeItem.text}</div>
+                <div className="ititle">{activeItem.text || "New item"}</div>
                 {activeItem.sub?.length > 0 && <ul className="subs">{activeItem.sub.slice(0, 3).map((s, i) => <li key={i}>{s}</li>)}</ul>}
               </div>
             </div>
@@ -412,7 +453,7 @@ export default function App() {
 
   // inline H1 rename helper (kept inside to capture active.id)
   function renameRoadmap_inline(name) {
-    if (!name || name === active.name) return;
-    setStore((s) => ({ ...s, roadmaps: s.roadmaps.map((r) => r.id === active.id ? { ...r, name } : r) }));
+    if (name === active.name) return;
+    setStore((s) => ({ ...s, roadmaps: s.roadmaps.map((r) => r.id === active.id ? { ...r, name: name || "Untitled roadmap" } : r) }));
   }
 }

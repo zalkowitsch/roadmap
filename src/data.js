@@ -25,7 +25,7 @@ export function emptyBoard() {
     areas: [
       {
         id: "area-" + newId(),
-        name: "New workstream",
+        name: "",            // empty → shows the "New workstream" placeholder
         accent: PALETTE[0],
         meta: null,
         months: {},

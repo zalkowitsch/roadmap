@@ -1,0 +1,111 @@
+/* ============================================================
+   Design System — Tokens
+   The single source of truth. Components reference ONLY these
+   semantic tokens, never raw hex. Re-theme the whole app by
+   editing this file. Reusable across any app that imports it.
+   ============================================================ */
+
+:root {
+  /* ---- Palette (raw scale — referenced by semantic tokens only) ---- */
+  --c-ink-0:   #0c0d10;
+  --c-ink-1:   #131419;
+  --c-ink-2:   #15161c;
+  --c-ink-3:   #1a1c24;
+  --c-ink-4:   #24262e;
+  --c-ink-5:   #1b1d24;
+  --c-paper-0: #f4f1ea;   /* warm off-white */
+  --c-paper-1: #a3a09a;
+  --c-paper-2: #6b6862;
+  --c-gold:    #e9b949;
+  --c-gold-hi: #f0c75e;
+  --c-gold-lo: #3a2f12;
+  --c-gold-ink:#1a1407;
+  --c-danger:  #fca5a5;
+  --c-danger-line: #5a2a2a;
+
+  /* ---- Semantic surface ---- */
+  --surface-base:    var(--c-ink-0);
+  --surface-raised:  var(--c-ink-1);
+  --surface-sunken:  var(--c-ink-2);
+  --surface-hover:   var(--c-ink-3);
+
+  /* ---- Semantic text ---- */
+  --text-strong: var(--c-paper-0);
+  --text-dim:    var(--c-paper-1);
+  --text-faint:  var(--c-paper-2);
+  --text-on-accent: var(--c-gold-ink);
+
+  /* ---- Borders ---- */
+  --border:        var(--c-ink-4);
+  --border-soft:   var(--c-ink-5);
+  --border-strong: #3a3d47;
+
+  /* ---- Accent (primary) ---- */
+  --accent:        var(--c-gold);
+  --accent-hover:  var(--c-gold-hi);
+  --accent-soft:   var(--c-gold-lo);
+  --accent-text:   var(--c-gold);
+
+  /* ---- Feedback ---- */
+  --danger:        var(--c-danger);
+  --danger-border: var(--c-danger-line);
+
+  /* ---- Radii ---- */
+  --radius-xs: 5px;
+  --radius-sm: 7px;
+  --radius-md: 9px;
+  --radius-lg: 11px;
+  --radius-xl: 18px;
+  --radius-pill: 999px;
+
+  /* ---- Elevation ---- */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.4), 0 8px 28px rgba(0,0,0,.35);
+  --shadow-lg: 0 24px 70px rgba(0,0,0,.55);
+  --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+
+  /* ---- Spacing scale (4px base) ---- */
+  --space-1: 4px;
+  --space-2: 7px;
+  --space-3: 10px;
+  --space-4: 14px;
+  --space-5: 18px;
+  --space-6: 26px;
+  --space-7: 36px;
+
+  /* ---- Typography ---- */
+  --font-display: "Fraunces", Georgia, serif;
+  --font-body:    "Spline Sans", system-ui, sans-serif;
+  --font-mono:    "Spline Sans Mono", ui-monospace, monospace;
+  --fs-eyebrow: 11px;
+  --fs-meta:    10.5px;
+  --fs-body:    14px;
+  --fs-card:    13px;
+  --tracking-wide: .02em;
+  --tracking-eyebrow: .22em;
+
+  /* ---- Motion ---- */
+  --ease: cubic-bezier(.16,.84,.44,1);
+  --dur-fast: .12s;
+  --dur:      .15s;
+  --dur-slow: .32s;
+
+  /* ---- App layout (kept here so layout is themeable too) ---- */
+  --col-w: 268px;
+  --row-label-w: 210px;
+
+  /* ---- Legacy aliases (so existing styles.css keeps working) ---- */
+  --bg: var(--surface-base);
+  --bg-raised: var(--surface-raised);
+  --bg-cell: var(--surface-sunken);
+  --bg-cell-hover: var(--surface-hover);
+  --ink: var(--text-strong);
+  --ink-dim: var(--text-dim);
+  --ink-faint: var(--text-faint);
+  --line: var(--border);
+  --line-soft: var(--border-soft);
+  --gold: var(--accent);
+  --gold-soft: var(--accent-soft);
+  --milestone: var(--accent);
+  --radius: var(--radius-lg);
+  --shadow: var(--shadow-sm);
+}
