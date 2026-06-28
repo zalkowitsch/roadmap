@@ -7,6 +7,11 @@ import "./tokens.css";
 import "./primitives.css";
 
 export { default as EditableText } from "./EditableText.jsx";
+export { default as RichText } from "./RichText.jsx";
+export { default as Outline } from "./Outline.jsx";
+export { default as AtMenu } from "./AtMenu.jsx";
+export { default as Sidebar } from "./Sidebar.jsx";
+import "./sidebar.css";
 
 const cx = (...xs) => xs.filter(Boolean).join(" ");
 

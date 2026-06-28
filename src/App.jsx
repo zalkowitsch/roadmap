@@ -2,78 +2,180 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext, DragOverlay, PointerSensor, useSensor, useSensors, closestCorners, useDroppable,
 } from "@dnd-kit/core";
-import {
-  SortableContext, useSortable, verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
+import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { emptyBoard, normalizeBoard, nextAccent, newId } from "./data.js";
-import { Button, IconButton, Chip, Row, Spacer, EditableText } from "./ds";
+import {
+  emptyBoard, normalizeBoard, nextAccent, newId,
+  projectAreaToMonths, locateNode, makeNode, mergeNodeInto, foldName,
+  monthIndexToISO, endDateToMonthIndex,
+  sliceContextSplit, sliceKeys, reconcileSlice,
+} from "./data.js";
+import { Button, IconButton, Chip, Row, Spacer, EditableText, Outline, AtMenu, Sidebar } from "./ds";
 
-const STORE_KEY = "roadmaps:v1";
+const ROOT_KEY = "roadmaps:v3";     // workspaces layer
+const STORE_KEY = "roadmaps:v2";    // legacy: { roadmaps, activeId }
+const OLD_STORE_KEY = "roadmaps:v1";
 
 /* ============================================================
-   Multi-roadmap store (localStorage)
-   shape: { roadmaps: [{ id, name, board }], activeId }
+   Multi-tenant store (localStorage)
+   shape: {
+     version: 1,
+     workspaces: [{ id, name, roadmaps: [{ id, name, board }], activeId }],
+     activeWorkspaceId,
+   }
+   Every board flows through normalizeBoard so v1 data upgrades to v2.
+   The app derives a { roadmaps, activeId } view of the ACTIVE workspace, so
+   every existing roadmap handler keeps working unchanged (see the setStore shim).
    ============================================================ */
-function loadStore() {
-  try {
-    const raw = localStorage.getItem(STORE_KEY);
-    if (raw) {
-      const s = JSON.parse(raw);
-      if (s?.roadmaps?.length) return s;
-    }
-  } catch { /* fall through */ }
-  const first = { id: "rm-" + newId(), name: "Untitled roadmap", board: emptyBoard() };
-  return { roadmaps: [first], activeId: first.id };
+function freshRoadmap() {
+  return { id: "rm-" + newId(), name: "Untitled roadmap", board: emptyBoard() };
+}
+function freshWorkspace(name = "My workspace") {
+  const r = freshRoadmap();
+  return { id: "ws-" + newId(), name, roadmaps: [r], activeId: r.id };
 }
 
-/* ---------- sortable item ---------- */
-function Item({ item, areaId, monthIdx, accent, edit, autoFocus, handlers }) {
+// upgrade a legacy { roadmaps, activeId } object (normalize every board)
+function upgradeLegacy(s) {
+  if (!s?.roadmaps?.length) return null;
+  return {
+    roadmaps: s.roadmaps.map((r) => {
+      const res = normalizeBoard(r.board);
+      return { ...r, board: res.ok ? res.board : emptyBoard() };
+    }),
+    activeId: s.activeId,
+  };
+}
+
+function loadStore() {
+  // v3: workspaces layer
+  try {
+    const raw = localStorage.getItem(ROOT_KEY);
+    if (raw) {
+      const root = JSON.parse(raw);
+      if (root?.workspaces?.length) {
+        // re-normalize every board on load (forward-compatible)
+        root.workspaces = root.workspaces.map((w) => {
+          const up = upgradeLegacy({ roadmaps: w.roadmaps, activeId: w.activeId });
+          return up ? { ...w, ...up } : { ...w, ...freshWorkspace(w.name) };
+        });
+        if (!root.activeWorkspaceId || !root.workspaces.some((w) => w.id === root.activeWorkspaceId)) {
+          root.activeWorkspaceId = root.workspaces[0].id;
+        }
+        return root;
+      }
+    }
+  } catch { /* fall through */ }
+
+  // migrate from legacy v2 → wrap as a single workspace
+  const wrapLegacy = (legacy) => {
+    const up = upgradeLegacy(legacy);
+    if (!up) return null;
+    const ws = { id: "ws-default", name: "My workspace", roadmaps: up.roadmaps, activeId: up.activeId };
+    return { version: 1, workspaces: [ws], activeWorkspaceId: ws.id };
+  };
+  for (const key of [STORE_KEY, OLD_STORE_KEY]) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const root = wrapLegacy(JSON.parse(raw));
+        if (root) { try { localStorage.setItem(ROOT_KEY, JSON.stringify(root)); } catch { /* quota */ } return root; }
+      }
+    } catch { /* fall through */ }
+  }
+
+  // brand-new
+  const ws = freshWorkspace();
+  return { version: 1, workspaces: [ws], activeWorkspaceId: ws.id };
+}
+
+/* ============================================================
+   Display helpers — render a (sliced) node subtree inside a card.
+   A node is "delivered here" when its own end_date lands in this month;
+   otherwise it is shown dimmed as context (a parent of something that does).
+   ============================================================ */
+function NodeTree({ node, monthIdx, monthDates, depth = 0 }) {
+  const here = node.end_date != null && endDateToMonthIndex(node.end_date, monthDates) === monthIdx;
+  const hasKids = (node.children?.length || 0) > 0;
+  return (
+    <li className={"tn" + (here ? " here" : " ctx") + (hasKids ? " group" : "")} style={{ "--d": depth }}>
+      <span className="tn-text">{node.text || <span className="tn-empty">—</span>}</span>
+      {node.description && <div className="tn-desc">{node.description}</div>}
+      {renderMeta(node)}
+      {hasKids && (
+        <ul className="tn-kids">
+          {node.children.map((c) => (
+            <NodeTree key={c.id} node={c} monthIdx={monthIdx} monthDates={monthDates} depth={depth + 1} />
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+}
+
+function renderMeta(node) {
+  const bits = [];
+  if (node.status) bits.push(<Chip key="st" className="tn-chip">{node.status}</Chip>);
+  for (const t of node.teams || []) bits.push(<Chip key={"t" + t} className="tn-chip">{t}</Chip>);
+  for (const p of node.people || []) bits.push(<Chip key={"p" + p} className="tn-chip">@{p}</Chip>);
+  if (!bits.length) return null;
+  return <Row wrap gap={1} className="tn-meta">{bits}</Row>;
+}
+
+/* ---------- a draggable deliverable card (one projected top-level node) ----------
+   The card edits ONLY this month's slice. Context-only ancestors (delivered in
+   an earlier month, present here just so a descendant can show) collapse into
+   the breadcrumb; only the part that lands in THIS month is editable. */
+function Card({ card, areaId, monthIdx, monthDates, accent, edit, autoFocusId, onCommitCard, onDeleteCard, onAt }) {
+  // a top-level node can project into several months → make the DnD id unique
+  // per cell, but carry the real node id for mutations.
+  const dndId = `${card.id}@${monthIdx}`;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: item.id, data: { areaId, monthIdx }, disabled: !edit });
+    useSortable({ id: dndId, data: { areaId, monthIdx, nodeId: card.id }, disabled: !edit });
   const style = { transform: CSS.Translate.toString(transform), transition, "--a": accent };
+
+  // split the slice: context prefix (breadcrumb) + editable roots (this month)
+  const { contextPath, roots } = useMemo(
+    () => sliceContextSplit(card, monthIdx, monthDates),
+    [card, monthIdx, monthDates]
+  );
+
+  // editor seed = only the editable roots (the month slice from the branch down)
+  const seed = useMemo(() => roots.map(stripToText), [roots]);
+
+  // @-menu path for the card-level button targets the first editable root.
+  const atPath = [...contextPath, roots[0]?.text].filter(Boolean);
 
   return (
     <div
       ref={setNodeRef}
-      className={"item" + (isDragging ? " dragging" : "") + (item.hardDate ? " pinned" : "")}
+      className={"item card" + (isDragging ? " dragging" : "")}
       style={style}
       {...(edit ? { ...listeners, ...attributes } : {})}
     >
-      {item.hardDate && (
-        <div className="hard-date" title="Hard date"><span className="pin">◆</span>{item.hardDate}</div>
-      )}
-      <EditableText
-        className="ititle"
-        value={item.text}
-        placeholder="New item"
-        editable={edit}
-        autoFocus={autoFocus}
-        stopPointer
-        onCommit={(t) => handlers.onEdit(item.id, "text", t)}
-      />
-      {item.sub?.length > 0 && (
-        <ul className="subs">
-          {item.sub.map((s, i) => (
-            <EditableText
-              key={i}
-              as="li"
-              value={s}
-              placeholder="New sub-item"
-              editable={edit}
-              autoFocus={item._focusSub === i}
-              stopPointer
-              onCommit={(t) => handlers.onEdit(item.id, "sub", t, i)}
-            />
+      {edit ? (
+        <Outline
+          className="card-tree"
+          seed={seed}
+          editable
+          autoFocus={autoFocusId === card.id}
+          stopPointer
+          onCommit={(nodes) => onCommitCard(card, nodes, monthIdx, contextPath, roots)}
+          onAt={({ rect, path }) => onAt({ rect, path: [...contextPath, ...path], areaId, monthIdx })}
+        />
+      ) : (
+        <ul className="tn-root">
+          {roots.map((r) => (
+            <NodeTree key={r.id} node={r} monthIdx={monthIdx} monthDates={monthDates} />
           ))}
         </ul>
       )}
+
       {edit && (
         <div className="ctrls" onPointerDown={(e) => e.stopPropagation()}>
-          <IconButton active={!!item.hardDate} title="Set/clear hard date"
-            onClick={() => handlers.onHardDate(item.id, item.hardDate)}>◆</IconButton>
-          <IconButton title="Add sub-item" onClick={() => handlers.onAddSub(item.id)}>＋</IconButton>
-          <IconButton tone="danger" title="Delete" onClick={() => handlers.onDelete(item.id)}>✕</IconButton>
+          <IconButton title="@ dates / teams / status"
+            onClick={(e) => onAt({ rect: e.currentTarget.getBoundingClientRect(), path: atPath, areaId, monthIdx })}>@</IconButton>
+          <IconButton tone="danger" title="Delete" onClick={() => onDeleteCard(card, monthIdx, contextPath, roots)}>✕</IconButton>
         </div>
       )}
     </div>
@@ -86,35 +188,66 @@ function CellDropZone({ id, areaId, monthIdx, empty, edit }) {
   return <div ref={setNodeRef} className={"cell-dropzone" + (empty ? " big" : "") + (isOver ? " over" : "")} />;
 }
 
-function Cell({ areaId, monthIdx, items, accent, edit, overCellId, milestone, justAddedId, handlers }) {
+function Cell({ areaId, monthIdx, cards, monthDates, accent, edit, overCellId, milestone, autoFocusId, onCommitCard, onDeleteCard, onAddHere, onAt }) {
   const cellId = `${areaId}::${monthIdx}`;
   const isTarget = overCellId === cellId;
   return (
-    <div className={"cell" + (milestone ? " milestone" : "") + (isTarget ? " drop-target" : "") + (items.length === 0 ? " empty" : "")}>
-      <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
-        {items.map((item) => (
-          <Item key={item.id} item={item} areaId={areaId} monthIdx={monthIdx} accent={accent}
-            edit={edit} autoFocus={justAddedId === item.id} handlers={handlers} />
-        ))}
-        <CellDropZone id={cellId} areaId={areaId} monthIdx={monthIdx} empty={items.length === 0} edit={edit} />
-      </SortableContext>
-      {items.length === 0 && !edit && <span className="empty-dot">·</span>}
-      {edit && <Button variant="dashed" className="add-item" onClick={() => handlers.onAddItem(areaId, monthIdx)}>＋ add</Button>}
+    <div className={"cell" + (milestone ? " milestone" : "") + (isTarget ? " drop-target" : "") + (cards.length === 0 ? " empty" : "")}>
+      {cards.map((card) => (
+        <Card key={card.id} card={card}
+          areaId={areaId} monthIdx={monthIdx} monthDates={monthDates}
+          accent={accent} edit={edit} autoFocusId={autoFocusId}
+          onCommitCard={onCommitCard} onDeleteCard={onDeleteCard} onAt={onAt} />
+      ))}
+      <CellDropZone id={cellId} areaId={areaId} monthIdx={monthIdx} empty={cards.length === 0} edit={edit} />
+      {cards.length === 0 && !edit && <span className="empty-dot">·</span>}
+      {edit && <Button variant="dashed" className="add-item" onClick={() => onAddHere(areaId, monthIdx)}>＋ add</Button>}
     </div>
   );
 }
 
+/* ---------- node → {text, description, children} (drop dates/ids for the seed) ---------- */
+function stripToText(node) {
+  return {
+    text: node.text,
+    description: node.description ?? null,
+    children: (node.children || []).map(stripToText),
+  };
+}
+
 /* ============================================================ */
 export default function App() {
-  const [store, setStore] = useState(loadStore);
+  const [root, setRoot] = useState(loadStore);
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem("sb:collapsed") === "1"; } catch { return false; }
+  });
+
+  // Derive a { roadmaps, activeId } view of the ACTIVE workspace, and a
+  // setStore shim that writes those updates back INTO that workspace — so every
+  // existing roadmap handler (newRoadmap, commitCard, addHere, …) keeps working
+  // unchanged against `store`/`setStore` while data really lives per-workspace.
+  const activeWorkspace =
+    root.workspaces.find((w) => w.id === root.activeWorkspaceId) || root.workspaces[0];
+  const store = { roadmaps: activeWorkspace.roadmaps, activeId: activeWorkspace.activeId };
+  const setStore = (updater) => setRoot((r) => {
+    const cur = r.workspaces.find((w) => w.id === r.activeWorkspaceId) || r.workspaces[0];
+    const view = { roadmaps: cur.roadmaps, activeId: cur.activeId };
+    const next = typeof updater === "function" ? updater(view) : updater;
+    return {
+      ...r,
+      workspaces: r.workspaces.map((w) =>
+        w.id === cur.id ? { ...w, roadmaps: next.roadmaps, activeId: next.activeId } : w
+      ),
+    };
+  });
+
   const [edit, setEdit] = useState(false);
-  const [activeItem, setActiveItem] = useState(null);
+  const [activeCard, setActiveCard] = useState(null);
   const [overCellId, setOverCellId] = useState(null);
   const [toast, setToast] = useState(null);
-  const [scrolled, setScrolled] = useState(false);
   const [dragFile, setDragFile] = useState(false);
-  // id of the node (item or area) just created — gets autofocus once, then cleared
   const [justAddedId, setJustAddedId] = useState(null);
+  const [atMenu, setAtMenu] = useState(null); // { x, y, areaId, monthIdx, path }
   const fileRef = useRef(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
@@ -122,6 +255,8 @@ export default function App() {
   const active = store.roadmaps.find((r) => r.id === store.activeId) || store.roadmaps[0];
   const board = active.board;
   const months = board.months;
+  const monthDates = board.monthDates;
+
   const milestoneMonths = useMemo(
     () => new Set((board.milestones || []).map((m) => m.monthIndex)),
     [board.milestones]
@@ -130,27 +265,49 @@ export default function App() {
     const m = {}; (board.milestones || []).forEach((x) => (m[x.monthIndex] = x)); return m;
   }, [board.milestones]);
 
-  useEffect(() => {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch { /* quota */ }
-  }, [store]);
+  // projection: area.id -> { monthIdx -> cards[] }
+  const projections = useMemo(() => {
+    const out = {};
+    for (const a of board.areas) out[a.id] = projectAreaToMonths(a, monthDates);
+    return out;
+  }, [board.areas, monthDates]);
 
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 150);
-    window.addEventListener("scroll", onScroll, { passive: true });
-    onScroll();
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
+    try { localStorage.setItem(ROOT_KEY, JSON.stringify(root)); } catch { /* quota */ }
+  }, [root]);
 
-  // clear the autofocus marker after it's been consumed by the mounted node
+  useEffect(() => {
+    try { localStorage.setItem("sb:collapsed", collapsed ? "1" : "0"); } catch { /* quota */ }
+  }, [collapsed]);
+
+
+
   useEffect(() => {
     if (!justAddedId) return;
-    const t = setTimeout(() => setJustAddedId(null), 300);
+    const t = setTimeout(() => setJustAddedId(null), 400);
     return () => clearTimeout(t);
   }, [justAddedId]);
 
+  // Keyboard shortcut: ⌘/Ctrl+E toggles edit mode; Esc leaves it. We ignore ⌘E
+  // while the caret is in an editable field so it never fights typing.
+  useEffect(() => {
+    const onKey = (e) => {
+      const t = e.target;
+      const typing = t?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t?.tagName || "");
+      if ((e.metaKey || e.ctrlKey) && (e.key === "e" || e.key === "E")) {
+        if (typing) return;
+        e.preventDefault();
+        setEdit((v) => !v);
+      } else if (e.key === "Escape" && edit && !typing && !atMenu) {
+        setEdit(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [edit, atMenu]);
+
   const flash = (msg) => { setToast(msg); setTimeout(() => setToast(null), 1900); };
 
-  /* mutate the active board */
   const setBoard = (fn) => setStore((s) => {
     const next = structuredClone(s);
     const a = next.roadmaps.find((r) => r.id === next.activeId);
@@ -158,49 +315,117 @@ export default function App() {
     return next;
   });
 
-  const locate = (b, itemId) => {
-    for (const a of b.areas) for (const mi of Object.keys(a.months)) {
-      const idx = a.months[mi].findIndex((x) => x.id === itemId);
-      if (idx >= 0) return { area: a, mi: +mi, idx, item: a.months[mi][idx] };
-    }
-    return null;
+  /* ---------- tree commit: replace a card's subtree, stamping new leaves ---------- */
+  // Build an index of existing dates/meta by path-key so re-merging preserves them.
+  const indexByPath = (tree, rootName) => {
+    const idx = new Map();
+    const walk = (nodes, anc) => {
+      for (const n of nodes) {
+        const key = [...anc, foldName(n.text)].join("›");
+        idx.set(key, n);
+        walk(n.children || [], [...anc, foldName(n.text)]);
+      }
+    };
+    walk(tree, [foldName(rootName)]);
+    return idx;
   };
 
-  /* ---------- item mutations ---------- */
-  const editText = (itemId, field, text, idx) => setBoard((b) => {
-    const loc = locate(b, itemId); if (!loc) return;
-    if (field === "text") loc.item.text = text;
-    else if (field === "sub") { if (text === "") loc.item.sub.splice(idx, 1); else loc.item.sub[idx] = text; }
-    if (loc.item._focusSub != null) delete loc.item._focusSub;
+  // Convert editor nodes ({text,children}) into board nodes, preserving existing
+  // dates/meta by path and stamping NEW leaves with this month's end_date.
+  const materialize = (editorNodes, anc, idx, stampISO) => {
+    return editorNodes
+      .filter((n) => (n.text || "").trim() !== "" || (n.children && n.children.length))
+      .map((n) => {
+        const keyAnc = [...anc, foldName(n.text)];
+        const existing = idx.get(keyAnc.join("›"));
+        const kids = materialize(n.children || [], keyAnc, idx, stampISO);
+        const isLeaf = kids.length === 0;
+        const node = makeNode(n.text, existing ? {
+          type: existing.type, start_date: existing.start_date, end_date: existing.end_date,
+          status: existing.status, cycleId: existing.cycleId, assigneeId: existing.assigneeId,
+          teams: existing.teams, people: existing.people,
+          // description comes from the EDITOR (what the user just typed); fall
+          // back to the existing one only when the editor produced none.
+          description: n.description != null ? n.description : existing.description,
+        } : { description: n.description });
+        if (existing?.id) node.id = existing.id;
+        node.children = kids;
+        // stamp a freshly-created leaf with the month it was authored in
+        if (isLeaf && !node.end_date && !existing) node.end_date = stampISO;
+        return node;
+      });
+  };
+
+  // Commit one card: reconcile the edited month-slice back into the area tree.
+  //   contextPath = the non-editable breadcrumb tail (context nodes under the
+  //                 area root); the editable roots live directly under it.
+  //   roots       = the slice's editable roots BEFORE the edit (for delete diff).
+  const commitCard = (areaId, card, editorNodes, monthIdx, contextPath, roots) => setBoard((b) => {
+    const area = b.areas.find((a) => a.id === areaId);
+    if (!area) return;
+    const idx = indexByPath(area.tree, area.name);
+    const stampISO = monthIndexToISO(monthIdx, b.monthDates);
+    // anchor (folded) = the context nodes from the area root down. The area root
+    // is implicit (tree level), so it is NOT part of anchorFolds.
+    const ctxFolds = (contextPath || []).map(foldName);
+    // materialize editor text into board nodes, keyed under area.name › context…
+    const matAnc = [foldName(area.name), ...ctxFolds];
+    const built = materialize(editorNodes, matAnc, idx, stampISO);
+    // before-set: keys of this-month nodes that existed under the anchor
+    const beforeKeys = sliceKeys(roots || []);
+    reconcileSlice(area.tree, monthIdx, b.monthDates, ctxFolds, built, beforeKeys);
   });
-  const deleteItem = (itemId) => setBoard((b) => { const l = locate(b, itemId); if (l) l.area.months[l.mi].splice(l.idx, 1); });
-  const addSub = (itemId) => setBoard((b) => {
-    const l = locate(b, itemId); if (!l) return;
-    l.item.sub.push("");
-    l.item._focusSub = l.item.sub.length - 1; // focus the new sub-item
+
+  // Delete every part of this card's slice that belongs to THIS month, leaving
+  // other-month descendants intact.
+  const deleteCard = (areaId, card, monthIdx, contextPath, roots) => setBoard((b) => {
+    const area = b.areas.find((a) => a.id === areaId);
+    if (!area) return;
+    const ctxFolds = (contextPath || []).map(foldName);
+    const beforeKeys = sliceKeys(roots || []);
+    // reconcile with NO built roots → every before-key not re-added is removed
+    // (subject to allInMonth guard inside reconcileSlice)
+    reconcileSlice(area.tree, monthIdx, b.monthDates, ctxFolds, [], beforeKeys);
+    // prune now-empty context chain (a context node left with no children and
+    // no own date in any month is dead weight)
+    pruneEmptyChain(area.tree, ctxFolds);
   });
-  const addItem = (areaId, monthIdx) => {
+
+  // "+ add": create an empty top-level node in this area, stamped to this month.
+  const addHere = (areaId, monthIdx) => {
     const id = newId();
     setBoard((b) => {
       const area = b.areas.find((a) => a.id === areaId);
-      (area.months[monthIdx] ||= []).push({ id, text: "", sub: [] });
+      const node = makeNode("", { end_date: monthIndexToISO(monthIdx, b.monthDates) });
+      node.id = id;
+      area.tree.push(node);
     });
-    setJustAddedId(id); // triggers autoFocus on the new card's title
+    setJustAddedId(id);
   };
-  const setHardDate = (itemId, current) => {
-    const val = prompt("Hard date (e.g. “Sep 15”, “Q4”). Blank to clear.", current || "");
-    if (val === null) return;
-    setBoard((b) => { const l = locate(b, itemId); if (l) l.item.hardDate = val.trim() || undefined; });
-    flash(val.trim() ? "Hard date set" : "Hard date cleared");
+
+  /* ---------- @-menu: set a node's date / entity ---------- */
+  const applyAt = (action) => {
+    if (!atMenu) return;
+    const { areaId, path } = atMenu;
+    setBoard((b) => {
+      const area = b.areas.find((a) => a.id === areaId);
+      if (!area) return;
+      // resolve the node by path (path = node texts from the card root down)
+      const target = resolveByPath(area.tree, path);
+      if (!target) return;
+      if (action.kind === "date") target[action.field] = action.iso;
+      else if (action.kind === "status") target.status = action.value;
+      else if (action.kind === "team") target.teams = uniq([...(target.teams || []), action.value]);
+      else if (action.kind === "person") target.people = uniq([...(target.people || []), action.value]);
+    });
+    if (action.kind === "date") flash(`${action.field === "end_date" ? "End" : "Start"} date set`);
   };
 
   /* ---------- area mutations ---------- */
   const addArea = () => {
     const id = "area-" + newId();
-    setBoard((b) => {
-      b.areas.push({ id, name: "", accent: nextAccent(b.areas.length), meta: null, months: {} });
-    });
-    setJustAddedId(id); // focus the new workstream's name
+    setBoard((b) => { b.areas.push({ id, name: "", accent: nextAccent(b.areas.length), meta: null, tree: [] }); });
+    setJustAddedId(id);
   };
   const renameArea = (areaId, name) => setBoard((b) => { const a = b.areas.find((x) => x.id === areaId); if (a) a.name = name; });
   const deleteArea = (areaId) => {
@@ -208,31 +433,41 @@ export default function App() {
     setBoard((b) => { b.areas = b.areas.filter((a) => a.id !== areaId); });
   };
 
-  /* ---------- dnd ---------- */
-  const onDragStart = (e) => { const l = locate(board, e.active.id); setActiveItem(l?.item || null); };
+  /* ---------- dnd: dragging a card to a month sets its end_date ---------- */
+  const onDragStart = (e) => {
+    const d = e.active.data.current;
+    if (!d) return;
+    const card = projections[d.areaId]?.[d.monthIdx]?.find((c) => c.id === d.nodeId);
+    setActiveCard(card || null);
+  };
   const onDragOver = (e) => {
     const o = e.over; if (!o) { setOverCellId(null); return; }
     const d = o.data.current; if (d) setOverCellId(`${d.areaId}::${d.monthIdx}`);
   };
   const onDragEnd = (e) => {
-    setActiveItem(null); setOverCellId(null);
+    setActiveCard(null); setOverCellId(null);
     const { active: act, over } = e; if (!over) return;
+    const ad = act.data.current, od = over.data.current;
+    if (!ad || !od) return;
+    if (od.monthIdx === ad.monthIdx && od.areaId === ad.areaId) return; // no-op
     setBoard((b) => {
-      const from = locate(b, act.id); if (!from) return;
-      const od = over.data.current; if (!od) return;
-      const toAreaId = od.areaId, toMonth = od.monthIdx, beforeId = od.cell ? null : over.id;
-      const sameCell = from.area.id === toAreaId && from.mi === toMonth;
-      const [moved] = from.area.months[from.mi].splice(from.idx, 1);
-      const toArea = b.areas.find((a) => a.id === toAreaId);
-      const dst = (toArea.months[toMonth] ||= []);
-      if (beforeId && beforeId !== act.id) {
-        const at = dst.findIndex((x) => x.id === beforeId);
-        dst.splice(at < 0 ? dst.length : at, 0, moved);
-      } else if (sameCell && beforeId === act.id) {
-        dst.splice(from.idx, 0, moved);
-      } else dst.push(moved);
+      const area = b.areas.find((a) => a.id === ad.areaId);
+      if (!area) return;
+      const found = locateNode(area.tree, ad.nodeId);
+      if (!found) return;
+      found.node.end_date = monthIndexToISO(od.monthIdx, b.monthDates);
     });
+    flash("Moved to " + months[od.monthIdx]);
   };
+
+  /* ---------- workspace (tenant) management ---------- */
+  const switchWorkspace = (id) => setRoot((r) => ({ ...r, activeWorkspaceId: id }));
+  const addWorkspace = () => setRoot((r) => {
+    const ws = freshWorkspace("New workspace");
+    return { ...r, workspaces: [...r.workspaces, ws], activeWorkspaceId: ws.id };
+  });
+  const workspaceSettings = () => flash("Workspace settings — coming soon");
+  const workspaceMembers = () => flash("Members & sharing — coming soon");
 
   /* ---------- roadmap management ---------- */
   const newRoadmap = () => setStore((s) => {
@@ -240,11 +475,15 @@ export default function App() {
     return { roadmaps: [...s.roadmaps, r], activeId: r.id };
   });
   const switchRoadmap = (id) => setStore((s) => ({ ...s, activeId: id }));
-  const renameRoadmap = (id) => {
-    const cur = store.roadmaps.find((r) => r.id === id);
-    const name = prompt("Roadmap name:", cur?.name || "");
-    if (name == null) return;
-    setStore((s) => ({ ...s, roadmaps: s.roadmaps.map((r) => r.id === id ? { ...r, name: name.trim() || r.name } : r) }));
+  const renameRoadmap = (id, name) => {
+    // sidebar passes the new name inline; legacy callers omit it → prompt
+    if (name == null) {
+      const cur = store.roadmaps.find((r) => r.id === id);
+      name = prompt("Roadmap name:", cur?.name || "");
+      if (name == null) return;
+    }
+    const clean = (name || "").trim();
+    setStore((s) => ({ ...s, roadmaps: s.roadmaps.map((r) => r.id === id ? { ...r, name: clean || r.name } : r) }));
   };
   const deleteRoadmap = (id) => {
     if (store.roadmaps.length === 1) { flash("Keep at least one roadmap"); return; }
@@ -294,30 +533,52 @@ export default function App() {
   const onDragOverWin = (e) => { if (dragFile) e.preventDefault(); };
   const onDragLeaveWin = (e) => { if (e.clientX <= 0 && e.clientY <= 0) setDragFile(false); };
 
-  const handlers = { onEdit: editText, onDelete: deleteItem, onAddSub: addSub, onAddItem: addItem, onHardDate: setHardDate };
+  const openAt = ({ rect, path, areaId, monthIdx }) => {
+    setAtMenu({ x: rect.left, y: (rect.bottom || rect.top || 200) + 4, path, areaId, monthIdx });
+  };
 
   return (
+    <div className="shell">
+      <Sidebar
+        workspace={{ id: activeWorkspace.id, name: activeWorkspace.name, plan: "Free plan", memberCount: 1 }}
+        workspaces={root.workspaces.map((w) => ({ id: w.id, name: w.name }))}
+        roadmaps={store.roadmaps.map((r) => ({ id: r.id, name: r.name }))}
+        activeId={store.activeId}
+        collapsed={collapsed}
+        onToggleCollapse={() => setCollapsed((v) => !v)}
+        onSwitchWorkspace={switchWorkspace}
+        onAddWorkspace={addWorkspace}
+        onWorkspaceSettings={workspaceSettings}
+        onMembers={workspaceMembers}
+        onSelectRoadmap={switchRoadmap}
+        onRenameRoadmap={renameRoadmap}
+        onNewRoadmap={newRoadmap}
+        onDeleteRoadmap={deleteRoadmap}
+      />
     <div
-      className={"app" + (edit ? " editmode" : "") + (scrolled ? " scrolled" : "")}
+      className={"app shell-main" + (edit ? " editmode" : "")}
       onDrop={onDrop} onDragEnter={onDragEnterWin} onDragOver={onDragOverWin} onDragLeave={onDragLeaveWin}
     >
-      {/* sticky bar */}
-      <div className={"stickybar" + (scrolled ? " show" : "") + (edit ? " editing" : "")}>
-        <div className="sb-brand"><span className="sb-mark">◆</span><span className="sb-title">{active.name || "Untitled roadmap"}</span></div>
-        <Button variant="ghost" active={edit} dot onClick={() => setEdit((v) => !v)}>{edit ? "Editing" : "Edit mode"}</Button>
-        <Button variant="ghost" onClick={exportJSON}>⤓ Export</Button>
-        <Button variant="ghost" onClick={() => fileRef.current?.click()}>⤒ Import</Button>
-        <Spacer />
-        <span className="sb-hint">{edit ? "drag · ◆ date · click to edit" : "view mode"}</span>
-        <Button variant="ghost" className="sb-top" title="Top" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>↑</Button>
-      </div>
+      {/* Header = a SLIM sticky topbar (always pinned, FIXED height) + a non-sticky
+          intro that simply scrolls away. No animated heights, no two stickies
+          depending on each other → no flicker. The month-head sticks below the
+          topbar at a CONSTANT offset (--topbar-h). */}
+      <header className={"topbar" + (edit ? " editing" : "")}>
+        <h1 className="topbar-title" title={active.name}>{active.name || "Untitled roadmap"}</h1>
+        <Row wrap gap={3} className="toolbar">
+          <Button active={edit} dot onClick={() => setEdit((v) => !v)} title="⌘E / Ctrl+E">{edit ? "Editing — click to lock" : "Edit mode"}</Button>
+          <Button onClick={exportJSON}>⤓ Export</Button>
+          <Button onClick={() => fileRef.current?.click()}>⤒ Import JSON</Button>
+          <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={onFileInput} />
+        </Row>
+      </header>
 
-      {/* masthead */}
-      <header className="masthead">
+      {/* intro — eyebrow, big title, lede, roadmap tabs, hint. Scrolls away. */}
+      <section className="intro">
         <p className="eyebrow">Roadmap Studio</p>
         <EditableText
           as="h1"
-          className="editable-h1"
+          className="editable-h1 intro-title"
           value={active.name}
           placeholder="Untitled roadmap"
           editable={edit}
@@ -325,40 +586,14 @@ export default function App() {
           title={edit ? "Click to rename" : undefined}
         />
         <p className="lede">
-          A roadmap is a JSON you bring. Drop a <code>.json</code> file anywhere to load it,
-          start from the skeleton below, or switch between saved roadmaps. Everything saves to this browser.
+          A roadmap is a JSON you bring. Items live in a unified tree — type <code>Title › item › subitem</code> with
+          Tab to nest, and the same path merges across months. Drag a card to a month, or use <code>@</code> to set dates.
         </p>
 
-        {/* roadmap switcher */}
-        <div className="rm-bar">
-          {store.roadmaps.map((r) => (
-            <button
-              key={r.id}
-              className={"rm-tab" + (r.id === store.activeId ? " on" : "")}
-              onClick={() => switchRoadmap(r.id)}
-              onDoubleClick={() => renameRoadmap(r.id)}
-              title="Click to open · double-click to rename"
-            >
-              {r.name || "Untitled roadmap"}
-              {r.id === store.activeId && store.roadmaps.length > 1 && (
-                <span className="rm-x" title="Delete roadmap" onClick={(e) => { e.stopPropagation(); deleteRoadmap(r.id); }}>✕</span>
-              )}
-            </button>
-          ))}
-          <button className="rm-tab add" onClick={newRoadmap} title="New roadmap">＋</button>
-        </div>
+        <span className="hint">{edit ? "Tab nests · drag card → month · @ dates/teams/status · ✕ delete" : "view mode — toggle Edit to plan"}</span>
+      </section>
 
-        <Row wrap gap={3} className="toolbar">
-          <Button active={edit} dot onClick={() => setEdit((v) => !v)}>{edit ? "Editing — click to lock" : "Edit mode"}</Button>
-          <Button onClick={exportJSON}>⤓ Export</Button>
-          <Button onClick={() => fileRef.current?.click()}>⤒ Import JSON</Button>
-          <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={onFileInput} />
-          <Spacer />
-          <span className="hint">{edit ? "drag to move/reorder · ◆ hard date · click text to edit · ＋ / ✕" : "view mode — toggle Edit to plan"}</span>
-        </Row>
-      </header>
-
-      {/* milestone banner (only if the board defines milestones) */}
+      {/* milestone banner */}
       {(board.milestones?.length > 0) && (
         <section className="milestones">
           {board.milestones.map((m) => (
@@ -408,9 +643,14 @@ export default function App() {
                   {edit && <Button variant="dashed" className="area-del" onClick={() => deleteArea(area.id)} title="Delete workstream">✕ remove</Button>}
                 </div>
                 {months.map((_, mi) => (
-                  <Cell key={mi} areaId={area.id} monthIdx={mi} items={area.months[mi] || []}
+                  <Cell key={mi} areaId={area.id} monthIdx={mi}
+                    cards={projections[area.id]?.[mi] || []}
+                    monthDates={monthDates}
                     accent={area.accent} edit={edit} overCellId={overCellId}
-                    milestone={milestoneMonths.has(mi)} justAddedId={justAddedId} handlers={handlers} />
+                    milestone={milestoneMonths.has(mi)} autoFocusId={justAddedId}
+                    onCommitCard={(card, nodes, monthIdx, contextPath, roots) => commitCard(area.id, card, nodes, monthIdx, contextPath, roots)}
+                    onDeleteCard={(card, monthIdx, contextPath, roots) => deleteCard(area.id, card, monthIdx, contextPath, roots)}
+                    onAddHere={addHere} onAt={openAt} />
                 ))}
               </React.Fragment>
             ))}
@@ -424,12 +664,11 @@ export default function App() {
         </div>
 
         <DragOverlay dropAnimation={{ duration: 180 }}>
-          {activeItem ? (
+          {activeCard ? (
             <div className="drag-overlay">
-              <div className={"item" + (activeItem.hardDate ? " pinned" : "")} style={{ "--a": "#e9b949", width: 248 }}>
-                {activeItem.hardDate && <div className="hard-date"><span className="pin">◆</span>{activeItem.hardDate}</div>}
-                <div className="ititle">{activeItem.text || "New item"}</div>
-                {activeItem.sub?.length > 0 && <ul className="subs">{activeItem.sub.slice(0, 3).map((s, i) => <li key={i}>{s}</li>)}</ul>}
+              <div className="item card" style={{ "--a": "#e9b949", width: 248 }}>
+                {activeCard._path?.length > 0 && <div className="card-path">{activeCard._path.join(" › ")}</div>}
+                <ul className="tn-root"><NodeTree node={activeCard} monthIdx={-1} monthDates={monthDates} /></ul>
               </div>
             </div>
           ) : null}
@@ -447,13 +686,57 @@ export default function App() {
         </div>
       )}
 
+      {/* @-menu */}
+      {atMenu && (
+        <AtMenu
+          x={atMenu.x} y={atMenu.y}
+          monthDates={monthDates}
+          currentMonth={atMenu.monthIdx}
+          onPick={applyAt}
+          onClose={() => setAtMenu(null)}
+        />
+      )}
+
       {toast && <div className="toast">{toast}</div>}
+    </div>
     </div>
   );
 
-  // inline H1 rename helper (kept inside to capture active.id)
   function renameRoadmap_inline(name) {
     if (name === active.name) return;
     setStore((s) => ({ ...s, roadmaps: s.roadmaps.map((r) => r.id === active.id ? { ...r, name: name || "Untitled roadmap" } : r) }));
   }
+}
+
+/* ---------- small helpers ---------- */
+function uniq(arr) { return [...new Set(arr)]; }
+
+// Remove trailing context nodes that ended up empty (no children, no own date)
+// after a deletion. Walks the folded chain from the deepest node up.
+function pruneEmptyChain(tree, ctxFolds) {
+  for (let depth = ctxFolds.length; depth >= 1; depth--) {
+    let arr = tree, parentArr = null, idx = -1, node = null;
+    for (let i = 0; i < depth; i++) {
+      const j = arr.findIndex((n) => foldName(n.text) === ctxFolds[i]);
+      if (j < 0) { node = null; break; }
+      if (i === depth - 1) { parentArr = arr; idx = j; node = arr[j]; }
+      else arr = arr[j].children;
+    }
+    if (node && (node.children || []).length === 0 && node.end_date == null && parentArr) {
+      parentArr.splice(idx, 1);
+    }
+  }
+}
+
+// resolve a node by a path of texts (from a card root downward) within a tree
+function resolveByPath(tree, path) {
+  if (!path || !path.length) return null;
+  let level = tree;
+  let node = null;
+  for (const name of path) {
+    node = level.find((n) => foldName(n.text) === foldName(name));
+    if (!node) return null;
+    level = node.children;
+  }
+  return node;
 }

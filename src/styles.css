@@ -28,7 +28,12 @@
 
 * { box-sizing: border-box; }
 
-html, body, #root { height: 100%; margin: 0; }
+/* min-height (not height) so #root GROWS with content. With height:100% the
+   root was pinned to the viewport (797px) while content overflowed past it,
+   which clipped the sticky masthead's containing block — the header vanished
+   instead of sticking once you scrolled past one screen. */
+html, body { height: 100%; margin: 0; }
+#root { min-height: 100%; }
 
 body {
   background: var(--bg);
@@ -55,45 +60,49 @@ body::before {
 
 .app { position: relative; z-index: 1; min-height: 100%; padding: 0 0 80px; }
 
-/* ---------- Masthead ---------- */
-.masthead {
-  padding: 44px clamp(24px, 5vw, 72px) 28px;
-  border-bottom: 1px solid var(--line);
-  position: relative;
-}
-.masthead .eyebrow {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: .28em;
-  text-transform: uppercase;
-  color: var(--gold);
-  margin: 0 0 14px;
-}
-.masthead h1 {
-  font-family: var(--font-display);
-  font-optical-sizing: auto;
-  font-weight: 350;
-  font-size: clamp(34px, 5.5vw, 62px);
-  line-height: .98;
-  letter-spacing: -.018em;
-  margin: 0;
-  max-width: 16ch;
-}
-.masthead h1 em {
-  font-style: italic;
-  color: var(--gold);
-  font-weight: 400;
-}
-.masthead .lede {
-  margin: 16px 0 0;
-  color: var(--ink-dim);
-  font-size: 15px;
-  max-width: 56ch;
-}
+/* ---------- Header: a slim sticky TOPBAR (fixed height) + a scrolling INTRO ----
+   No animated heights, no two interdependent stickies. The topbar is always
+   pinned at a CONSTANT height; the month-head sticks just below it at the same
+   constant offset (--topbar-h). The intro just scrolls away. Result: no flicker. */
+:root { --topbar-h: 56px; }
 
-/* toolbar — layout only; buttons are DS primitives (.ds-btn) */
-.toolbar { margin-top: 26px; }
-.toolbar .hint {
+.topbar {
+  position: sticky; top: 0; z-index: 50;
+  height: var(--topbar-h);
+  display: flex; align-items: center; gap: 18px;
+  padding: 0 clamp(24px, 5vw, 72px);
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+  backdrop-filter: saturate(1.3) blur(12px);
+}
+.topbar-title {
+  flex: 1; min-width: 0; margin: 0;
+  font-family: var(--font-display); font-weight: 400; font-size: 19px;
+  letter-spacing: -.01em; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.topbar.editing { border-bottom-color: var(--gold); box-shadow: inset 0 2px 0 var(--gold); }
+.toolbar { flex: none; }
+
+/* intro — scrolls away normally; not sticky, no height animation */
+.intro {
+  padding: 30px clamp(24px, 5vw, 72px) 26px;
+}
+.intro .eyebrow {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: .28em;
+  text-transform: uppercase; color: var(--gold); margin: 0 0 12px;
+}
+.intro-title {
+  font-family: var(--font-display); font-optical-sizing: auto; font-weight: 350;
+  font-size: clamp(34px, 5.5vw, 62px); line-height: .98; letter-spacing: -.018em;
+  margin: 0; max-width: 16ch;
+}
+.intro-title em { font-style: italic; color: var(--gold); font-weight: 400; }
+.intro .lede {
+  margin: 16px 0 0; color: var(--ink-dim); font-size: 15px; max-width: 56ch;
+}
+.intro .hint {
+  display: block; margin-top: 14px;
   font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint);
   letter-spacing: .02em;
 }
@@ -127,10 +136,13 @@ body::before {
 .ms-card .title { color: var(--ink-dim); font-size: 13.5px; line-height: 1.45; }
 
 /* ---------- Board scroll wrapper ---------- */
+/* No overflow here: an overflow container (even overflow-x:auto, which forces
+   overflow-y to auto) becomes the scroll context and breaks the month-head's
+   position:sticky (it would scroll away instead of pinning to the viewport top).
+   So the page itself scrolls — horizontally too when there are many months,
+   Notion/Linear-style — and the month-head can stick to the window. */
 .board-wrap {
-  overflow-x: auto; overflow-y: visible;
   padding: 8px clamp(24px, 5vw, 72px) 0;
-  scrollbar-color: #2c2f38 transparent;
 }
 .board {
   min-width: max-content;
@@ -139,9 +151,13 @@ body::before {
   gap: 0;
 }
 
-/* month header row */
+/* month header row — sticky. While the header is expanded (top of page) it sits
+   flush under it at top:0 in normal flow. Once the masthead collapses (.scrolled),
+   it sticks just below the compressed bar at its measured height. --masthead-h is
+   measured by JS only in the collapsed state, so the offset is exact (no gap, no
+   flicker, no floating-in-the-middle-of-the-board). */
 .month-head {
-  position: sticky; top: 0; z-index: 5;
+  position: sticky; top: var(--topbar-h); z-index: 5;
   background: var(--bg);
   padding: 14px 14px 12px;
   border-bottom: 1px solid var(--line);
@@ -225,12 +241,12 @@ body::before {
 }
 .item:hover { border-color: #34373f; background: var(--bg-cell-hover); }
 .item.editing { border-color: var(--a); box-shadow: 0 0 0 3px color-mix(in srgb, var(--a) 14%, transparent); }
+/* title — RichText (markdown) lives inside .ititle */
 .item .ititle {
   font-size: 13px; line-height: 1.42; padding-left: 7px;
   color: var(--ink); font-weight: 500;
   word-break: break-word;
 }
-.item .ititle[contenteditable="true"] { outline: none; cursor: text; }
 .item ul.subs {
   list-style: none; margin: 7px 0 1px; padding: 0 0 0 7px;
   display: flex; flex-direction: column; gap: 3px;
@@ -240,9 +256,48 @@ body::before {
   padding-left: 12px; position: relative;
 }
 .item ul.subs li::before {
-  content: "◦"; position: absolute; left: 0; color: var(--ink-faint);
+  content: "◦"; position: absolute; left: 0; top: 0; color: var(--ink-faint);
 }
-.item ul.subs li[contenteditable="true"] { outline: none; color: var(--ink); }
+/* sub-item RichText: inherit the dimmer sub typography */
+.item ul.subs li .ds-rt .ProseMirror { color: var(--ink-dim); }
+.item ul.subs li .ds-rt .ProseMirror strong { color: var(--ink); }
+
+/* ---------- Deliverable card (v2 tree) ---------- */
+.item.card { padding: 8px 11px 9px; }
+.card-path {
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--ink-faint);
+  padding-left: 7px; margin-bottom: 5px; word-break: break-word;
+}
+
+/* node tree (view mode) */
+ul.tn-root, ul.tn-kids { list-style: none; margin: 0; padding: 0; }
+ul.tn-root { padding-left: 7px; }
+.tn { position: relative; padding-left: 14px; margin: 2px 0; }
+.tn::before {
+  content: "›"; position: absolute; left: 2px; top: 0; color: var(--ink-faint);
+  font-size: 11px;
+}
+.tn.group > .tn-text { font-weight: 600; }
+.tn-text { font-size: 12.5px; line-height: 1.4; color: var(--ink); word-break: break-word; }
+.tn.here > .tn-text { color: var(--ink); }
+.tn.ctx > .tn-text { color: var(--ink-faint); }     /* shown only as context */
+.tn.here > .tn-text::after {
+  content: ""; display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--a, var(--gold)); margin-left: 6px; vertical-align: middle;
+}
+.tn-empty { color: var(--ink-faint); }
+/* node description — a dimmed paragraph under the title */
+.tn-desc {
+  font-size: 11px; line-height: 1.4; color: var(--ink-dim);
+  margin: 2px 0 1px; white-space: pre-wrap; word-break: break-word;
+}
+.tn-kids { padding-left: 9px; border-left: 1px solid var(--line-soft); margin-left: 1px; }
+.tn-meta { margin: 3px 0 1px; }
+.tn-chip { font-size: 9px; padding: 1px 6px; }
+
+/* tree editor inside a card (edit mode) */
+.card-tree { padding-left: 4px; }
 
 /* item controls (edit mode) — buttons are DS .ds-iconbtn primitives */
 .item .ctrls {
@@ -302,65 +357,16 @@ body::before {
 .board-wrap::-webkit-scrollbar-thumb { background: #2c2f38; border-radius: 6px; border: 3px solid var(--bg); }
 .board-wrap::-webkit-scrollbar-track { background: transparent; }
 
-/* ============================================================
-   Compressed sticky bar — edit-state indicator on scroll
-   ============================================================ */
-.stickybar {
-  position: fixed; top: 0; left: 0; right: 0; z-index: 50;
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px clamp(20px, 4vw, 48px);
-  background: color-mix(in srgb, var(--bg) 82%, transparent);
-  backdrop-filter: saturate(1.4) blur(14px);
-  border-bottom: 1px solid var(--line);
-  transform: translateY(-100%);
-  opacity: 0;
-  transition: transform .32s cubic-bezier(.16,.84,.44,1), opacity .25s ease, border-color .25s, box-shadow .25s;
-  pointer-events: none;
-}
-.stickybar.show {
-  transform: translateY(0);
-  opacity: 1;
-  pointer-events: auto;
-}
-/* the loud signal: editing → gold top rail + glow */
-.stickybar.editing {
-  border-bottom-color: var(--gold);
-  box-shadow: inset 0 2px 0 var(--gold), 0 10px 30px rgba(0,0,0,.4);
-  background:
-    linear-gradient(180deg, rgba(233,185,73,.10), transparent 60%),
-    color-mix(in srgb, var(--bg) 80%, transparent);
-}
-.stickybar.editing::before {
-  content: ""; position: absolute; left: 0; top: 0; height: 2px; right: 0;
+/* editing accent rail pulse on the compressed header */
+.app.scrolled .masthead.editing::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px;
   background: linear-gradient(90deg, transparent, var(--gold), transparent);
   animation: railpulse 2.4s ease-in-out infinite;
 }
 @keyframes railpulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
 
-.stickybar .sb-brand { display: flex; align-items: center; gap: 8px; margin-right: 6px; }
-.stickybar .sb-mark {
-  color: var(--gold); font-size: 13px;
-  transition: transform .3s ease;
-}
-.stickybar.editing .sb-mark { animation: spin 6s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-.stickybar .sb-title {
-  font-family: var(--font-display); font-weight: 400; font-size: 16px;
-  letter-spacing: -.01em; white-space: nowrap;
-}
-.stickybar .ds-btn { padding: 7px 12px; }
-.stickybar .sb-hint {
-  font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint);
-  letter-spacing: .02em; white-space: nowrap;
-}
-.stickybar .sb-top.ds-btn { width: 34px; padding: 7px 0; justify-content: center; }
-
-/* when the sticky bar is shown, drop the board's sticky month-heads below it
-   so they don't collide with the bar */
-.app.scrolled .month-head { top: 54px; }
-
 @media (max-width: 720px) {
-  .stickybar .sb-hint, .stickybar .sb-title { display: none; }
+  .masthead .hint { display: none; }
 }
 
 /* ============================================================

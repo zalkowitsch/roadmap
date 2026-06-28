@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roadmap Studio · methodology</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,400..500&family=Spline+Sans:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0c0d10;
+    --bg-raised: #131419;
+    --bg-sunken: #15161c;
+    --ink: #f4f1ea;
+    --ink-dim: #a3a09a;
+    --ink-faint: #6b6862;
+    --line: #24262e;
+    --gold: #e9b949;
+    --gold-soft: #3a2f12;
+    --font-display: "Fraunces", Georgia, serif;
+    --font-body: "Spline Sans", system-ui, sans-serif;
+    --font-mono: "Spline Sans Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: var(--font-body);
+    background: var(--bg); color: var(--ink);
+    line-height: 1.65; font-size: 15px;
+    -webkit-font-smoothing: antialiased;
+    background-image:
+      radial-gradient(900px 500px at 12% -8%, rgba(233,185,73,.07), transparent 60%),
+      radial-gradient(1100px 600px at 100% 0%, rgba(120,140,255,.05), transparent 55%);
+    background-attachment: fixed;
+  }
+  body::before {
+    content:""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    opacity: .035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  ::selection { background: var(--gold-soft); color: var(--ink); }
+
+  .layout { display: grid; grid-template-columns: 250px 1fr; min-height: 100vh; position: relative; z-index: 1; }
+
+  aside {
+    border-right: 1px solid var(--line); padding: 34px 22px 40px 34px;
+    position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  }
+  aside .brand a { font-family: var(--font-display); font-size: 21px; color: var(--ink); text-decoration: none; letter-spacing: -.015em; }
+  aside .brand .sub { display: block; font-family: var(--font-mono); font-size: 9px; letter-spacing: .22em; text-transform: uppercase; color: var(--gold); margin-top: 5px; }
+  aside nav { margin-top: 30px; font-family: var(--font-mono); font-size: 11px; letter-spacing: .04em; }
+  aside nav a { display: block; color: var(--ink-dim); text-decoration: none; padding: 6px 0; }
+  aside nav a:hover { color: var(--ink); }
+  aside nav a.active { color: var(--gold); border-left: 2px solid var(--gold); padding-left: 9px; margin-left: -11px; }
+  aside .back { margin-top: 34px; font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+  aside .back a { color: var(--ink-faint); text-decoration: none; }
+  aside .back a:hover { color: var(--gold); }
+
+  main { padding: 56px clamp(28px, 6vw, 96px) 120px; max-width: 820px; }
+
+  .eyebrow { font-family: var(--font-mono); font-size: 11px; letter-spacing: .28em; text-transform: uppercase; color: var(--gold); margin: 0 0 16px; }
+  h1 { font-family: var(--font-display); font-weight: 350; font-size: clamp(34px, 5vw, 56px); line-height: 1; letter-spacing: -.02em; margin: 0 0 8px; }
+  h1 em { font-style: italic; color: var(--gold); font-weight: 400; }
+  h2 { font-family: var(--font-display); font-weight: 400; font-size: 27px; letter-spacing: -.01em; margin: 52px 0 12px; padding-top: 22px; border-top: 1px solid var(--line); }
+  h3 { font-family: var(--font-display); font-weight: 500; font-size: 19px; margin: 30px 0 8px; }
+  p { color: var(--ink-dim); margin: 0 0 14px; }
+  p.lead { font-size: 19px; line-height: 1.55; color: var(--ink); max-width: 60ch; margin-bottom: 6px; }
+  strong { color: var(--ink); font-weight: 600; }
+  em { color: var(--ink); }
+  a.inline { color: var(--gold); text-decoration: underline; text-underline-offset: 2px; }
+  ul, ol { color: var(--ink-dim); padding-left: 22px; margin: 0 0 16px; }
+  li { margin: 6px 0; }
+  code { font-family: var(--font-mono); font-size: 12.5px; background: var(--bg-sunken); border: 1px solid var(--line); border-radius: 5px; padding: 1.5px 6px; color: var(--gold); }
+
+  .callout {
+    border: 1px solid var(--line); border-left: 3px solid var(--gold);
+    background: linear-gradient(180deg, rgba(233,185,73,.05), transparent 70%), var(--bg-raised);
+    border-radius: 11px; padding: 18px 22px; margin: 24px 0;
+  }
+  .callout .k { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--gold); display: block; margin-bottom: 7px; }
+  .callout p:last-child { margin-bottom: 0; }
+
+  .steps { counter-reset: s; list-style: none; padding: 0; margin: 20px 0; }
+  .steps li { counter-increment: s; position: relative; padding: 14px 0 14px 52px; border-bottom: 1px solid var(--line); margin: 0; }
+  .steps li:last-child { border-bottom: none; }
+  .steps li::before {
+    content: counter(s); position: absolute; left: 0; top: 12px;
+    width: 32px; height: 32px; border-radius: 50%;
+    border: 1px solid var(--gold); color: var(--gold);
+    font-family: var(--font-mono); font-size: 13px;
+    display: grid; place-items: center;
+  }
+  .steps li b { color: var(--ink); font-weight: 600; }
+
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 22px 0; }
+  .card { border: 1px solid var(--line); border-radius: 11px; padding: 18px 20px; background: var(--bg-raised); }
+  .card h4 { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase; margin: 0 0 10px; }
+  .card.is .h4-c { color: var(--gold); }
+  .card.isnt h4 { color: var(--ink-faint); }
+  .card.is h4 { color: var(--gold); }
+  .card p { font-size: 13.5px; margin: 0; }
+  .card ul { margin: 0; font-size: 13.5px; }
+
+  .foot { margin-top: 70px; padding-top: 22px; border-top: 1px solid var(--line); font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint); }
+
+  @media (max-width: 760px) {
+    .layout { grid-template-columns: 1fr; }
+    aside { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--line); }
+    .two { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside>
+    <div class="brand">
+      <a href="../">Roadmap Studio</a>
+      <span class="sub">Methodology</span>
+    </div>
+    <nav id="nav">
+      <a href="#what">What this is</a>
+      <a href="#not-gantt">Why it isn't a Gantt</a>
+      <a href="#method">The method</a>
+      <a href="#anatomy">Anatomy of a board</a>
+      <a href="#waterfall">From roadmap to plan</a>
+      <a href="#gantt">The Gantt view (soon)</a>
+      <a href="#authoring">Authoring</a>
+    </nav>
+    <div class="back"><a href="../">↩ Back to the app</a></div>
+  </aside>
+
+  <main>
+    <p class="eyebrow">Roadmap Studio</p>
+    <h1>Deliverables by month, <em>not a Gantt chart</em></h1>
+    <p class="lead">This is a tool for showing <strong>what we intend to deliver, and roughly when</strong> — organized by workstream and by month. It is deliberately not a dependency chart, not a resource plan, and not a schedule you defend to the day.</p>
+
+    <section id="what">
+      <h2>What this is</h2>
+      <p>A roadmap here is a grid: <strong>workstreams</strong> down the side, <strong>months</strong> across the top. Each cell holds the deliverables that workstream intends to land that month. That's the whole model.</p>
+      <p>It answers one question well — <em>“by this month, what will exist that didn't before?”</em> — and intentionally leaves the harder, lower-level questions (sequencing, effort, owners, risk) to the planning that happens <strong>after</strong> the roadmap, not inside it.</p>
+    </section>
+
+    <section id="not-gantt">
+      <h2>Why it isn't a Gantt</h2>
+      <p>A Gantt chart encodes <strong>tasks, durations, and dependencies</strong> on a timeline. It's the right tool once the work is understood. But a roadmap is set <em>before</em> that — when you still owe yourself the discovery to figure out how the work decomposes. Forcing a Gantt too early invents precision you don't have yet, and that false precision becomes a commitment you didn't mean to make.</p>
+      <div class="two">
+        <div class="card is">
+          <h4>This board shows</h4>
+          <ul>
+            <li>Intended deliverables, per workstream</li>
+            <li>The month each is expected to land</li>
+            <li>The shape of a quarter at a glance</li>
+            <li>Milestones that gate a month</li>
+          </ul>
+        </div>
+        <div class="card isnt">
+          <h4>It deliberately omits</h4>
+          <ul>
+            <li>Task-level dependencies &amp; critical path</li>
+            <li>Effort estimates / story points</li>
+            <li>Day-precise start &amp; end dates</li>
+            <li>Resource allocation</li>
+          </ul>
+        </div>
+      </div>
+      <div class="callout">
+        <span class="k">The point</span>
+        <p>The roadmap is a statement of <strong>outcomes and timing</strong>. The plan is a statement of <strong>work</strong>. Keeping them in separate tools keeps each honest — the roadmap stays readable by anyone, the plan stays detailed enough to execute.</p>
+      </div>
+    </section>
+
+    <section id="method">
+      <h2>The method</h2>
+      <p>The board is the <strong>top of a waterfall</strong>. You declare the deliverables and their target month first; the detailed planning flows down from there.</p>
+      <ol class="steps">
+        <li><b>State the deliverable.</b> Write the outcome you want to exist, in the month you want it — one card per deliverable, in the right workstream. Keep it outcome-shaped (“PT &amp; Ortho self-serve across core flows”), not task-shaped (“write the migration script”).</li>
+        <li><b>Place it in time.</b> Drag it to the month it should land. The column <em>is</em> the commitment; you're not picking a day, you're picking a month.</li>
+        <li><b>Gate the big ones.</b> Mark the months that carry a milestone. A milestone is a promise that a coherent set of deliverables is done — the natural checkpoint to re-plan against.</li>
+        <li><b>Then waterfall down.</b> For each deliverable, go work out <em>how</em>: break it into tickets, sequence them, find the dependencies, size the effort. That happens in your tracker (Linear, Jira), not here.</li>
+        <li><b>Let reality push back up.</b> When the lower-level plan says a deliverable can't make its month, you move the card — and the roadmap stays an honest reflection of intent, not a wish.</li>
+      </ol>
+    </section>
+
+    <section id="anatomy">
+      <h2>Anatomy of a board</h2>
+      <ul>
+        <li><strong>Workstream</strong> — a durable line of work (Clinical, Workspaces, Automations…). Rows on the board.</li>
+        <li><strong>Month</strong> — a column. The unit of timing. Coarse on purpose.</li>
+        <li><strong>Deliverable (item)</strong> — a card in a workstream × month cell. The outcome that should exist by then. Supports <strong>markdown</strong>, nested sub-items, and an optional <strong>hard date</strong> when a specific day genuinely matters.</li>
+        <li><strong>Milestone</strong> — a gate attached to a month: “by here, this set is done.”</li>
+      </ul>
+      <p>Everything is a JSON you bring or build. The board is data; the app just renders and edits it.</p>
+    </section>
+
+    <section id="waterfall">
+      <h2>From roadmap to plan</h2>
+      <p>The handoff is the whole value. A deliverable on this board is an <em>input</em> to planning, not the plan itself:</p>
+      <div class="callout">
+        <span class="k">Example</span>
+        <p>Card: <code>**Rules UI complete** — build, test, promote</code>, placed in <strong>Sept 1</strong>, in the <strong>Automations</strong> workstream.</p>
+        <p>That single card waterfalls into a dozen tickets — the builder, the draft model, ID/routing, dry-run, the promote flow — each with its own owner, estimate, and dependencies. None of that lives on the roadmap. The roadmap only says: <em>this exists by September, and it's an Automations outcome.</em></p>
+      </div>
+    </section>
+
+    <section id="gantt">
+      <h2>The Gantt view <em>— coming</em></h2>
+      <p>Some audiences do want the timeline picture. A planned <strong>view toggle</strong> will let you flip the same board between two lenses without changing the data:</p>
+      <ul>
+        <li><strong>Deliveries</strong> (today) — the month-grid above. Each card is an outcome in its month.</li>
+        <li><strong>Gantt</strong> (soon) — each deliverable becomes a bar; the <strong>delivery month is the bar's end</strong>, so a project reads as a span that finishes when the outcome lands.</li>
+      </ul>
+      <p>Same JSON, same workstreams, two ways to read it — deliverables-first for planning, timeline-first for communicating.</p>
+    </section>
+
+    <section id="authoring">
+      <h2>Authoring</h2>
+      <ul>
+        <li><strong>Edit mode</strong> — toggle it on, then drag cards between months, reorder within a column, add workstreams, and edit any text inline.</li>
+        <li><strong>Markdown</strong> — card text renders live as you type. Right-click a card for <strong>bold / italic / code / strike / headings / lists</strong>.</li>
+        <li><strong>Hard date</strong> — the <code>◆</code> on a card pins a specific day when the month isn't precise enough.</li>
+        <li><strong>Bring your own JSON</strong> — drop a <code>.json</code> file anywhere to load a board; <strong>Export</strong> writes it back out in the same shape. Everything saves to your browser.</li>
+      </ul>
+    </section>
+
+    <div class="foot">Roadmap Studio · methodology · a board states outcomes; the plan states work</div>
+  </main>
+</div>
+
+<script>
+  // Scroll-spy: highlight the active section in the sidebar.
+  const links = [...document.querySelectorAll('#nav a')];
+  const map = new Map(links.map(a => [a.getAttribute('href').slice(1), a]));
+  const obs = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => l.classList.remove('active'));
+        map.get(e.target.id)?.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  document.querySelectorAll('main section[id]').forEach(s => obs.observe(s));
+</script>
+</body>
+</html>
